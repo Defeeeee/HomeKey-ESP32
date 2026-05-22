@@ -78,7 +78,7 @@ void NfcManager::initAuthPrecompute() {
     return;
   }
 
-  ESP_LOGI(TAG, "Auth precompute enabled (cache=%u, pool=%u).", kAuthCtxCacheSize, kAuthCtxPoolSize);
+  ESP_LOGI(TAG, "Auth precompute enabled (cache=%u, pool=%u).", (unsigned int)kAuthCtxCacheSize, (unsigned int)kAuthCtxPoolSize);
 }
 
 void NfcManager::invalidateAuthCache() {
@@ -102,7 +102,7 @@ void NfcManager::invalidateAuthCache() {
   }
 
   if (invalidatedCount > 0) {
-    ESP_LOGI(TAG, "Auth cache invalidated (%u items).", invalidatedCount);
+    ESP_LOGI(TAG, "Auth cache invalidated (%u items).", (unsigned int)invalidatedCount);
   }
   if (m_authPrecomputeTaskHandle) {
     xTaskNotifyGive(m_authPrecomputeTaskHandle);
@@ -148,10 +148,7 @@ void NfcManager::authPrecomputeTask() {
     item->readerData = std::move(snapshot);
     item->generation = m_readerDataGeneration.load(std::memory_order_relaxed);
 
-    ESP_LOGI(TAG, "Auth precompute: generating (gen=%u, free=%u, ready=%u)...",
-             item->generation,
-             uxQueueMessagesWaiting(m_authCtxFreeQueue),
-             uxQueueMessagesWaiting(m_authCtxReadyQueue));
+    ESP_LOGI(TAG, "Auth precompute: generating (gen=%u, free=%u, ready=%u)...", (unsigned int)item->generation, (unsigned int)uxQueueMessagesWaiting(m_authCtxFreeQueue), (unsigned int)uxQueueMessagesWaiting(m_authCtxReadyQueue));
 
     auto startTime = std::chrono::high_resolution_clock::now();
     item->ctx = new (std::nothrow) DDKAuthenticationContext(kHomeKey, item->nfcFn, item->readerData, item->saveFn);
@@ -168,9 +165,7 @@ void NfcManager::authPrecomputeTask() {
 
     const uint32_t genAfter = m_readerDataGeneration.load(std::memory_order_relaxed);
     if (item->generation != genAfter) {
-      ESP_LOGI(TAG, "Auth precompute: stale during generation (itemGen=%u, genNow=%u), retrying...",
-               item->generation,
-               genAfter);
+      ESP_LOGI(TAG, "Auth precompute: stale during generation (itemGen=%u, genNow=%u), retrying...", (unsigned int)item->generation, (unsigned int)genAfter);
       delete item->ctx;
       item->ctx = nullptr;
       xQueueSend(m_authCtxFreeQueue, &item, 0);
@@ -185,11 +180,7 @@ void NfcManager::authPrecomputeTask() {
       continue;
     }
 
-    ESP_LOGI(TAG, "Auth precompute: ready in %lli ms (gen=%u, free=%u, ready=%u)",
-             durationMs,
-             item->generation,
-             uxQueueMessagesWaiting(m_authCtxFreeQueue),
-             uxQueueMessagesWaiting(m_authCtxReadyQueue));
+    ESP_LOGI(TAG, "Auth precompute: ready in %lli ms (gen=%u, free=%u, ready=%u)", durationMs, (unsigned int)item->generation, (unsigned int)uxQueueMessagesWaiting(m_authCtxFreeQueue), (unsigned int)uxQueueMessagesWaiting(m_authCtxReadyQueue));
   }
 }
 
@@ -274,7 +265,7 @@ bool NfcManager::begin() {
 			m_reader = std::make_unique<Pn7160Reader>(nfcGpioPins, m_nfcIrqPin, m_nfcVenPin, m_ecpData);
 			ESP_LOGI(TAG, "Using PN7160 reader");
     } else {
-    	ESP_LOGE(TAG, "Unsupported NFC reader type: %u", m_nfcReaderType);
+    	ESP_LOGE(TAG, "Unsupported NFC reader type: %u", (unsigned int)m_nfcReaderType);
     	return false;
     }
     if (m_hkAuthPrecomputeEnabled) {
@@ -544,7 +535,7 @@ void NfcManager::handleHomeKeyAuth() {
     if (gotCached) {
       const bool genMatch = (item->generation == genNow);
       if (!genMatch) {
-        ESP_LOGW(TAG, "Auth cache stale (itemGen=%u, genNow=%u) -> cold init.", item->generation, genNow);
+        ESP_LOGW(TAG, "Auth cache stale (itemGen=%u, genNow=%u) -> cold init.", (unsigned int)item->generation, (unsigned int)genNow);
         delete item->ctx;
         item->ctx = nullptr;
         xQueueSend(m_authCtxFreeQueue, &item, 0);
@@ -552,8 +543,7 @@ void NfcManager::handleHomeKeyAuth() {
       } else {
         const UBaseType_t readyAfter = uxQueueMessagesWaiting(m_authCtxReadyQueue);
         const UBaseType_t freeAfter = m_authCtxFreeQueue ? uxQueueMessagesWaiting(m_authCtxFreeQueue) : 0;
-        ESP_LOGI(TAG, "Auth cache hit (gen=%u, free=%u->%u, ready=%u->%u).",
-                 genNow, freeBefore, freeAfter, readyBefore, readyAfter);
+        ESP_LOGI(TAG, "Auth cache hit (gen=%u, free=%u->%u, ready=%u->%u).", (unsigned int)genNow, (unsigned int)freeBefore, (unsigned int)freeAfter, (unsigned int)readyBefore, (unsigned int)readyAfter);
         if (m_authPrecomputeTaskHandle) {
           xTaskNotifyGive(m_authPrecomputeTaskHandle);
         }
@@ -568,7 +558,7 @@ void NfcManager::handleHomeKeyAuth() {
       }
     }
 
-    ESP_LOGI(TAG, "Auth cache miss (gen=%u, free=%u, ready=%u) -> cold init.", genNow, freeBefore, readyBefore);
+    ESP_LOGI(TAG, "Auth cache miss (gen=%u, free=%u, ready=%u) -> cold init.", (unsigned int)genNow, (unsigned int)freeBefore, (unsigned int)readyBefore);
     if (m_authPrecomputeTaskHandle) {
       xTaskNotifyGive(m_authPrecomputeTaskHandle);
     }

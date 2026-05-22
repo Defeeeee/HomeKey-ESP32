@@ -1,3 +1,4 @@
+#include "include/user_alarm.h"
 #include <algorithm>
 #include <cstdint>
 #include <memory>
@@ -51,7 +52,7 @@ static void dhcp_set_captiveportal_url(void) {
     esp_netif_t* netif = esp_netif_get_handle_from_ifkey("WIFI_AP_DEF");
 
     ESP_ERROR_CHECK_WITHOUT_ABORT(esp_netif_dhcps_stop(netif));
-    ESP_ERROR_CHECK(esp_netif_dhcps_option(netif, ESP_NETIF_OP_SET, ESP_NETIF_CAPTIVEPORTAL_URI, captiveportal_uri, strlen(captiveportal_uri)));
+    // ESP_ERROR_CHECK(esp_netif_dhcps_option(netif, ESP_NETIF_OP_SET, ESP_NETIF_CAPTIVEPORTAL_URI, captiveportal_uri, strlen(captiveportal_uri)));
     ESP_ERROR_CHECK_WITHOUT_ABORT(esp_netif_dhcps_start(netif));
 }
 
@@ -188,6 +189,7 @@ void setup() {
     }
   }, ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
   pollHS = true;
+  user_alarm_setup();
 }
 
 /**
@@ -198,6 +200,7 @@ void setup() {
  */
 
 void loop() {
+  user_alarm_loop();
   if(pollHS)
     homeSpan.poll();
   vTaskDelay(pdMS_TO_TICKS(50));

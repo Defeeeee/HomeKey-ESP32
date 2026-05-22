@@ -213,7 +213,7 @@ void HomeKitLock::begin() {
         std::error_code ec;
         EventLockState s = alpaca::deserialize<EventLockState>(payload, ec);
         if(ec) { ESP_LOGE(TAG, "Failed to deserialize EventLockState event: %s", ec.message().c_str()); return; }
-        ESP_LOGI(TAG, "Received lock state event: %d -> %d", m_lockTargetState->getVal(), s.targetState);
+        ESP_LOGI(TAG, "Received lock state event (SYNC): Current:%d Target:%d", s.currentState, s.targetState);
         updateLockState(s.currentState, s.targetState);
     });
     const auto& miscConfig = m_configManager.getConfig<espConfig::misc_config_t>();
