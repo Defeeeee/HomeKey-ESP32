@@ -20,7 +20,7 @@
 #include "esp_heap_caps.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
-#include "esp_log_level.h"
+#include "esp_log.h"
 #include "esp_wifi.h"
 #include "eth_structs.hpp"
 #include "eventStructs.hpp"
@@ -139,7 +139,7 @@ void WebServerManager::begin() {
   bool isApMode = (wifiErr == ESP_OK && (currentMode == WIFI_MODE_AP || currentMode == WIFI_MODE_APSTA));
   bool isHttpsEnabled = m_configManager.getConfig<espConfig::misc_config_t>().webHttpsEnabled;
   httpd_ssl_config_t ssl_config = HTTPD_SSL_CONFIG_DEFAULT();
-  ssl_config.httpd.max_uri_handlers = 22;
+  ssl_config.httpd.max_uri_handlers = 32;
   ssl_config.httpd.max_open_sockets = 4;
   ssl_config.httpd.stack_size = 6144;
   ssl_config.httpd.uri_match_fn = httpd_uri_match_wildcard;
@@ -167,7 +167,7 @@ void WebServerManager::begin() {
   }
 
   if (httpd_ssl_start(&m_server, &ssl_config) == ESP_OK) {
-    ESP_LOGI(TAG, "HTTP server started, free heap: %zu", esp_get_free_heap_size());
+    ESP_LOGI(TAG, "HTTP server started, free heap: %lu", (unsigned long)esp_get_free_heap_size());
   } else {
     ESP_LOGE(TAG, "Failed to start HTTP server");
     ssl_config.transport_mode = HTTPD_SSL_TRANSPORT_INSECURE;
@@ -2078,7 +2078,7 @@ esp_err_t WebServerManager::handleOTAUpload(httpd_req_t *req) {
 
  auto app_part =  esp_ota_get_running_partition();
   if (uploadType == OTAUploadType::FIRMWARE && req->content_len > app_part->size) {
-    ESP_LOGE(TAG, "OTA size %zu > max %zu", req->content_len, app_part->size);
+    ESP_LOGE(TAG, "OTA size %lu > max %lu", (unsigned long)req->content_len, (unsigned long)app_part->size);
     instance->m_otaInProgress = false;
     httpd_resp_set_status(req, "413 Payload Too Large");
     httpd_resp_set_type(req, "application/json");
@@ -2087,7 +2087,7 @@ esp_err_t WebServerManager::handleOTAUpload(httpd_req_t *req) {
   }
   auto fs_part = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, "spiffs");
   if (uploadType == OTAUploadType::LITTLEFS && req->content_len > fs_part->size) {
-    ESP_LOGE(TAG, "OTA size %zu > max %zu", req->content_len, fs_part->size);
+    ESP_LOGE(TAG, "OTA size %lu > max %lu", (unsigned long)req->content_len, (unsigned long)fs_part->size);
     instance->m_otaInProgress = false;
     httpd_resp_set_status(req, "413 Payload Too Large");
     httpd_resp_set_type(req, "application/json");

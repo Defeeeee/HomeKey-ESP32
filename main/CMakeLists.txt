@@ -1,4 +1,4 @@
-idf_component_register(SRCS "main.cpp" "app_events.cpp" "app_event_loop.cpp" "ConfigManager.cpp" "ReaderDataManager.cpp"
+idf_component_register(SRCS "user_alarm.cpp" "main.cpp" "app_events.cpp" "app_event_loop.cpp" "ConfigManager.cpp" "ReaderDataManager.cpp"
                     "HardwareManager.cpp" "HomeKitLock.cpp" "LockManager.cpp"
                     "MqttManager.cpp" "HKServices.cpp" "NfcManager.cpp" "Pn532Reader.cpp" "Pn7160Reader.cpp" "WebServerManager.cpp" "WebSocketLogSinker.cpp"
                     "ConsoleLogSinker.cpp"
@@ -11,9 +11,13 @@ include(FetchContent)
 FetchContent_Declare(
   fmt
   GIT_REPOSITORY https://github.com/fmtlib/fmt
-  GIT_TAG        12.1.0)
+  GIT_TAG        10.2.1)
+set(FMT_INSTALL OFF CACHE BOOL "" FORCE)
+set(FMT_TEST OFF CACHE BOOL "" FORCE)
+set(FMT_DOC OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(fmt)
 target_link_libraries(${COMPONENT_LIB} PUBLIC fmt::fmt-header-only)
+add_compile_definitions(FMT_NO_FILE)
 if(NOT DEFINED ENV{CI})
   add_custom_target(webui 
     WORKING_DIRECTORY ${COMPONENT_DIR}/../data 

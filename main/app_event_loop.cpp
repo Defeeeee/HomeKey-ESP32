@@ -1,3 +1,4 @@
+#include <Arduino.h>
 #include "app_event_loop.hpp"
 #include "esp_log.h"
 #include <cstring>
@@ -17,6 +18,8 @@ struct HandlerContext {
 static void event_handler(void* handler_arg, esp_event_base_t base, int32_t id, void* event_data) {
     (void)base;
     (void)id;
+        
+        Serial.printf(">>> [EVENT LOOP] Ejecutando handler: base=%p, id=%d <<<\n", base, (int)id);
     auto* ctx = static_cast<HandlerContext*>(handler_arg);
     if (!ctx || !ctx->callback) return;
 
@@ -52,6 +55,8 @@ esp_err_t publish(esp_event_base_t base, int32_t id, const void* data, size_t si
         size = MAX_PAYLOAD;
     }
 
+        
+        Serial.printf(">>> [EVENT LOOP] Publicando: base=%p, id=%d, size=%zu <<<\n", base, (int)id, size);
     std::vector<uint8_t> buffer(sizeof(uint16_t) + size);
     uint16_t len = static_cast<uint16_t>(size);
     std::memcpy(buffer.data(), &len, sizeof(len));

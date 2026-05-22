@@ -1,3 +1,4 @@
+#include "app_events.hpp"
 #include "fmt/ranges.h"
 #include "config.hpp"
 #include "MqttManager.hpp"
@@ -123,6 +124,15 @@ bool MqttManager::begin(std::string deviceID) {
           break;
       }
     });
+    
+    m_alarm_event = AppEventLoop::subscribe(ALARM_EVENT, ALARM_STATE_CHANGED, [&](const uint8_t* data, size_t size){
+      if(size == 0 || data == nullptr) return;
+      std::string state(reinterpret_cast<const char*>(data), size);
+            publish("home/alarm/state", state, 0, true);
+      ESP_LOGI("MQTT_DEBUG", ">> ENVIADO A HA: topic=home/alarm/state payload=%s", state.c_str());
+      Serial.printf(">>> [MQTT DEBUG] Publicado %s en home/alarm/state <<<\n", state.c_str());
+    });
+
     this->deviceID = deviceID;
 
     esp_mqtt_client_config_t mqtt_cfg = {};
@@ -228,6 +238,7 @@ void MqttManager::onMqttEvent(esp_event_base_t base, int32_t event_id, void* eve
 
     switch (event->event_id) {
         case MQTT_EVENT_CONNECTED:
+        esp_mqtt_client_subscribe(m_client, "home/alarm/set", 0);
             ESP_LOGI(TAG, "MQTT_EVENT_CONNECTED: Connection established successfully");
             m_isConnected = true;
             publishMqttStatus(true, MqttErrorCode::NONE);
@@ -371,7 +382,13 @@ void MqttManager::onData(const std::string& topic, const std::string& data) {
     .source = LockManager::MQTT
     };
     std::array<uint8_t, sizeof(EventLockState)> d{};
-    if (topic == m_mqttConfig.lockStateCmd) {
+    
+        if (topic == "home/alarm/set") {
+            AppEventLoop::publish(ALARM_EVENT, ALARM_SET_REMOTE, (const uint8_t*)data.c_str(), data.length());
+            ESP_LOGI("MQTT_ALARM", "Comando remoto recibido: %s", data.c_str());
+            return;
+        }
+        if (topic == m_mqttConfig.lockStateCmd) {
       uint8_t v; if (!to_u8(data, v)) { ESP_LOGW(TAG, "Invalid lockStateCmd payload: %s", data.c_str()); return; }
       s.currentState = v;
       s.targetState = v;

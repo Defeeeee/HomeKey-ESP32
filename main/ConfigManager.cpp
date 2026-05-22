@@ -109,7 +109,8 @@ ConfigManager::ConfigManager() : m_isInitialized(false) {
       {"ethSpiBus", &m_miscConfig.ethSpiBus},
       {"ethRmiiConfig", &m_miscConfig.ethRmiiConfig},
       {"ethSpiConfig", &m_miscConfig.ethSpiConfig},
-      {"logLevel", &m_miscConfig.logLevel}
+      {"logLevel", &m_miscConfig.logLevel},
+      {"armedHomeZones", &m_miscConfig.armedHomeZones}
     }
     },
     {
@@ -186,8 +187,8 @@ bool ConfigManager::begin() {
 
   nvs_stats_t nvs_stats;
   nvs_get_stats(NULL, &nvs_stats);
-  ESP_LOGI(TAG,"Count: UsedEntries = (%lu), FreeEntries = (%lu), AvailableEntries = (%lu), AllEntries = (%lu)\n",
-       nvs_stats.used_entries, nvs_stats.free_entries, nvs_stats.available_entries, nvs_stats.total_entries);
+  ESP_LOGI(TAG,"Count: UsedEntries = (%u), FreeEntries = (%u), AvailableEntries = (%u), AllEntries = (%u)\n",
+       (unsigned int)nvs_stats.used_entries, (unsigned int)nvs_stats.free_entries, (unsigned int)nvs_stats.available_entries, (unsigned int)nvs_stats.total_entries);
 
   m_isInitialized = true;
 
@@ -577,7 +578,7 @@ void ConfigManager::deserialize(msgpack_object obj, std::string type) {
               break;
             }
             default:
-              ESP_LOGW(TAG, "DON'T KNOW THIS ONE! - %s (%d) = %d", key.c_str(), v.val.type, v.val.via.u64);
+              ESP_LOGW(TAG, "DON'T KNOW THIS ONE! - %s (%d) = %llu", key.c_str(), (int)v.val.type, (unsigned long long)v.val.via.u64);
             }
           }
         }, m_configMap[type][key]);
