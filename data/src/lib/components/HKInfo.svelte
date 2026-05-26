@@ -4,6 +4,7 @@
   import { calculateWifiSignal } from "$lib/utils/wifi.js";
   import ws from '$lib/services/ws.js';
   import { onMount, onDestroy } from "svelte";
+  import { logs, logIdIncrement } from "$lib/stores/logs.svelte";
   const version: string = __DEV__ ? "dev" : __VERSION__;
 
   let { hkInfo, error }: { hkInfo: HKInfo | null; error: string | null } = $props();
@@ -16,6 +17,18 @@
 
   let isSimMode = $state(false);
   let displayError = $derived(isSimMode ? null : error);
+
+  function addSimLog(msg: string, level = 3, tag = 'SIMULATOR') {
+    logs.unshift({
+      id: Date.now() + logIdIncrement(),
+      localts: new Date().toISOString(),
+      expanded: false,
+      msg,
+      level,
+      tag,
+      ts: Date.now()
+    });
+  }
 
   onMount(() => {
     if (__DEV__) {
@@ -163,6 +176,7 @@
         mqtt_connected: true
       });
       setAlarmStateLocal('disarmed');
+      addSimLog("Simulation Mode enabled. Connected to virtual state machine.");
     } else {
       updateSystemInfo({
         deviceName: '',
@@ -189,28 +203,33 @@
     if (isSimMode) {
       if (state === 'DISARMED') {
         setAlarmStateLocal('disarmed');
+        addSimLog("System disarmed via Web Console.");
         playShortBeep(523.25, 0.1);
         setTimeout(() => playShortBeep(659.25, 0.15), 100);
       } else if (state === 'ARMED_AWAY') {
         setAlarmStateLocal('arming_away');
+        addSimLog("Arming Away started. Exit delay active (10s).");
         exitDelaySecondsLeft = 10;
         simTimerId = setInterval(() => {
           exitDelaySecondsLeft--;
           playShortBeep(880, 0.04);
           if (exitDelaySecondsLeft <= 0) {
             setAlarmStateLocal('armed_away');
+            addSimLog("System armed successfully in Away mode.");
             playShortBeep(880, 0.1);
             setTimeout(() => playShortBeep(880, 0.1), 150);
           }
         }, 1000);
       } else if (state === 'ARMED_HOME') {
         setAlarmStateLocal('arming_home');
+        addSimLog("Arming Home started. Exit delay active (10s).");
         exitDelaySecondsLeft = 10;
         simTimerId = setInterval(() => {
           exitDelaySecondsLeft--;
           playShortBeep(880, 0.04);
           if (exitDelaySecondsLeft <= 0) {
             setAlarmStateLocal('armed_home');
+            addSimLog("System armed successfully in Home mode.");
             playShortBeep(880, 0.1);
             setTimeout(() => playShortBeep(880, 0.1), 150);
           }
@@ -235,6 +254,7 @@
     
     // Feedback beep
     playShortBeep(zoneOpen ? 587.33 : 440, 0.05);
+    addSimLog(`Zone ${index + 1} (${index === 0 ? 'Front Door' : 'Sensor'}) is ${zoneOpen ? 'OPEN' : 'CLOSED'}.`);
 
     // Run rules
     const state = systemInfo.alarm_state;
@@ -244,6 +264,7 @@
         armedModeBeforeSimDelay = state;
         systemInfo.alarm_state = 'pending';
         entryDelaySecondsLeft = 15;
+        addSimLog("Zone 1 (Front Door) breached. Starting entry delay countdown (15s)...");
         
         let secondsPassed = 0;
         simTimerId = setInterval(() => {
@@ -253,6 +274,7 @@
           if (entryDelaySecondsLeft <= 0) {
             stopAllSimulation();
             systemInfo.alarm_state = 'triggered';
+            addSimLog("Entry delay countdown expired. INTRUSION DETECTADA - SIREN ACTIVE!", 4);
             startSiren();
           }
         }, 1000);
@@ -271,6 +293,7 @@
         // Instant Zone Breach triggers siren immediately
         stopAllSimulation();
         systemInfo.alarm_state = 'triggered';
+        addSimLog(`Intrusion detected on Zone ${index + 1} (Instant sensor)! SIREN ACTIVE!`, 4);
         startSiren();
       }
     }
@@ -694,6 +717,46 @@
             <span class="text-xs font-bold" class:text-emerald-400={systemInfo?.mqtt_connected} class:text-rose-450={!systemInfo?.mqtt_connected}>{systemInfo?.mqtt_connected ? "Connected" : "Disconnected"}</span>
           </div>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Recent Activity Card -->
+  <div class="card bg-[#0e0e15]/40 backdrop-blur-xl shadow-2xl border border-white/5 rounded-[2rem] mt-6 relative overflow-hidden max-w-6xl">
+    <div class="absolute inset-0 bg-gradient-to-br from-white/[0.02] to-transparent pointer-events-none"></div>
+    <div class="card-body p-5">
+      <h2 class="card-title text-sm font-bold uppercase tracking-wider text-slate-300 flex justify-between items-center mb-2">
+        Recent Activity
+        <span class="badge border-none font-bold text-[9px] bg-white/5 text-slate-400 uppercase tracking-widest px-2.5 py-1.5 h-auto">Logs</span>
+      </h2>
+      <div class="space-y-2 mt-2 max-h-60 overflow-y-auto">
+        {#if logs.length === 0}
+          <div class="text-center py-6 text-slate-400 text-xs">
+            No recent events logged. Trigger a sensor or arm state to see activity.
+          </div>
+        {:else}
+          {#each logs.slice(0, 5) as log (log.id)}
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between p-3 rounded-xl bg-white/[0.01] border border-white/5 gap-2 text-xs transition-all duration-300 hover:bg-white/5">
+              <div class="flex items-center gap-3">
+                <span class="font-mono text-slate-400">
+                  {new Date(log.localts || Date.now()).toLocaleTimeString()}
+                </span>
+                <span class="badge border-none text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 h-auto {
+                  log.tag === 'SIMULATOR' ? 'bg-pink-500/10 text-pink-400 border border-pink-500/20' : 
+                  log.tag === 'NFC' ? 'bg-sky-500/10 text-sky-400 border border-sky-500/20' : 
+                  log.tag === 'MQTT' ? 'bg-indigo-500/10 text-indigo-400 border border-indigo-500/20' : 
+                  'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                }">
+                  {log.tag || 'SYSTEM'}
+                </span>
+                <span class="text-slate-200 font-medium break-all">{log.msg}</span>
+              </div>
+              <span class="text-[10px] text-slate-400/80 font-mono">
+                Level {log.level}
+              </span>
+            </div>
+          {/each}
+        {/if}
       </div>
     </div>
   </div>
