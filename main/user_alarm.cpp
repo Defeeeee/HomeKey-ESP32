@@ -6,6 +6,7 @@
 #include "include/app_events.hpp"
 #include "include/ConfigManager.hpp"
 #include "include/MqttManager.hpp"
+#include "include/WebServerManager.hpp"
 
 enum AlarmMode { DISARMED, ARMING_AWAY, ARMING_HOME, ARMED_AWAY, ARMED_HOME, ENTRY_DELAY, TRIGGERED };
 AlarmMode currentMode = DISARMED;
@@ -50,9 +51,35 @@ AlarmMode armedModeBeforeDelay = ARMED_AWAY;
 
 extern std::unique_ptr<ConfigManager> configManager;
 extern std::unique_ptr<MqttManager> mqttManager;
+extern std::unique_ptr<WebServerManager> webServerManager;
+
+void broadcast_ui_update() {
+    if (webServerManager) {
+        webServerManager->broadcastDeviceMetrics();
+    }
+}
 
 void mqtt_publish_state(const char* state) {
     AppEventLoop::publish(ALARM_EVENT, ALARM_STATE_CHANGED, (const uint8_t*)state, strlen(state));
+    broadcast_ui_update();
+}
+
+extern "C" const char* user_alarm_get_state_string() {
+    if(currentMode == DISARMED) return "disarmed";
+    if(currentMode == ARMING_AWAY) return "arming_away";
+    if(currentMode == ARMING_HOME) return "arming_home";
+    if(currentMode == ARMED_AWAY) return "armed_away";
+    if(currentMode == ARMED_HOME) return "armed_home";
+    if(currentMode == ENTRY_DELAY) return "pending";
+    if(currentMode == TRIGGERED) return "triggered";
+    return "disarmed";
+}
+
+extern "C" bool user_alarm_get_sensor_state(int id) {
+    if (id >= 1 && id <= 8) {
+        return sensors[id - 1];
+    }
+    return false;
 }
 
 void print_status() {
@@ -131,6 +158,7 @@ extern "C" void user_alarm_loop() {
                     sensors[zone.sensorIndex] = isOpen;
                     if (mqttManager) mqttManager->publishSensorState(zone.id, isOpen);
                     Serial.printf("⚡ [HARDWARE] Cambio en Zona %d: %s\n", zone.id, isOpen ? "OPEN" : "CLOSED");
+                    broadcast_ui_update();
                     
                     bool shouldTrigger = false;
                     bool shouldStartEntryDelay = false;
@@ -239,6 +267,7 @@ extern "C" void user_alarm_loop() {
             int zoneId = idx + 1;
             if (mqttManager) mqttManager->publishSensorState(zoneId, isOpen);
             Serial.printf("⚡ [SIMULADO] Cambio en Zona %d: %s\n", zoneId, isOpen ? "OPEN" : "CLOSED");
+            broadcast_ui_update();
 
             bool shouldTrigger = false;
             bool shouldStartEntryDelay = false;

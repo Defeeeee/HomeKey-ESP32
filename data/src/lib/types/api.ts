@@ -179,6 +179,8 @@ export interface MiscConfig {
   ethRmiiConfig: [number, number, number, number, number];
   /** SPI configuration [freq_mhz, pin_cs, pin_irq, pin_rst, pin_sck, pin_miso, pin_mosi] */
   ethSpiConfig: [number, number, number, number, number, number, number];
+  /** Bitmask for zones monitored in Armed Home mode */
+  armedHomeZones: number;
 }
 
 /**

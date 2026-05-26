@@ -107,9 +107,25 @@
 		}
 	};
 
+	// Initialize homeZones array from miscConfig.armedHomeZones bitmask
+	let homeZones = $state<boolean[]>(
+		Array.from({ length: 8 }, (_, i) => (((miscConfig.armedHomeZones ?? 0xFF) >> i) & 1) === 1)
+	);
+
+	const updateArmedHomeZones = () => {
+		let mask = 0;
+		for (let i = 0; i < 8; i++) {
+			if (homeZones[i]) {
+				mask |= (1 << i);
+			}
+		}
+		miscConfig.armedHomeZones = mask;
+	};
+
 	const resetForm = () => {
 		if (misc) {
 			miscConfig = misc;
+			homeZones = Array.from({ length: 8 }, (_, i) => (((misc.armedHomeZones ?? 0xFF) >> i) & 1) === 1);
 		}
 	};
 
@@ -500,6 +516,28 @@
 										</div>
 									</div>
 								{/if}
+							</div>
+
+							<!-- Alarm System Section -->
+							<div class="space-y-4 border-t border-base-300 pt-4">
+								<div>
+									<h3 class="text-sm font-semibold">Alarm Zones (Armed Home Mode)</h3>
+									<p class="text-xs text-base-content/60">Select which security zones are active and monitored when the system is armed in Home mode.</p>
+								</div>
+
+								<div class="grid grid-cols-2 sm:grid-cols-3 gap-3 bg-base-100 p-3 rounded-lg">
+									{#each Array.from({ length: 6 }) as _, i}
+										<label class="flex items-center gap-3 py-1.5 px-2 hover:bg-base-200/50 rounded-lg cursor-pointer">
+											<input
+												type="checkbox"
+												bind:checked={homeZones[i]}
+												onchange={updateArmedHomeZones}
+												class="checkbox checkbox-primary checkbox-sm"
+											/>
+											<span class="text-sm font-medium">Zone {i + 1} {i === 0 ? '(Delay)' : '(Instant)'}</span>
+										</label>
+									{/each}
+								</div>
 							</div>
 
 							<!-- HTTPS Section -->
