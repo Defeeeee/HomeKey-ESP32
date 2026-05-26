@@ -19,7 +19,7 @@
 </script>
 
 <div
-	class="lg:bg-base-200 bg-base-100 text-base-content w-64 lg:w-full max-lg:h-dvh h-full flex flex-col overflow-hidden"
+	class="lg:bg-[#0e0e15]/50 bg-[#0e0e15]/95 border-r border-white/5 backdrop-blur-xl text-slate-200 w-64 lg:w-full max-lg:h-dvh h-full flex flex-col overflow-hidden shadow-2xl"
 	role="navigation"
 	aria-label="Main navigation"
 	{id}
@@ -27,7 +27,7 @@
 	<!-- Header Section -->
 	<div class="hidden lg:block w-64">
 		<div class="flex items-center px-4 mt-4 mb-2 w-full">
-			<div class="flex size-10 items-center justify-center rounded-lg bg-info/20 w-12 p-2">
+			<div class="flex size-10 items-center justify-center rounded-xl bg-info/10 w-12 p-2 border border-info/20">
 				<img src={logoSrc()} alt="HomeKey-ESP32 logo" class="size-7" />
 			</div>
 			<div class="flex items-start flex-col w-full">
@@ -75,12 +75,12 @@
 	<!-- Menu Section -->
 	<!-- svelte-ignore a11y_click_events_have_key_events -->
 	<ul
-		class="menu flex-1 min-h-0 bg-base-100 lg:bg-base-200 overflow-y-auto w-full"
+		class="menu flex-1 min-h-0 bg-transparent overflow-y-auto w-full px-2"
 		role="menu"
 		onclick={onClose}
 	>
 		<li class="my-1" role="menuitem">
-			<a href={p('/')} class="text-lg flex items-center" {@attach isActiveLink({ className: 'bg-neutral' })}>
+			<a href={p('/')} class="text-lg flex items-center hover:bg-white/5 rounded-xl px-3 py-2.5 transition-all duration-200" {@attach isActiveLink({ className: 'bg-white/10 text-white font-semibold border border-white/5 shadow-md' })}>
 				<svg
 					xmlns="http://www.w3.org/2000/svg"
 					class="h-6 w-6 mr-1"
@@ -100,7 +100,7 @@
 			</a>
 		</li>
 		<li class="my-1" role="menuitem">
-			<a href={p('/mqtt')} class="text-lg flex items-center" {@attach isActiveLink({ className: 'bg-neutral' })}>
+			<a href={p('/mqtt')} class="text-lg flex items-center hover:bg-white/5 rounded-xl px-3 py-2.5 transition-all duration-200" {@attach isActiveLink({ className: 'bg-white/10 text-white font-semibold border border-white/5 shadow-md' })}>
 				<svg
 					xmlns="http://www.w3.org/2000/svg"
 					fill="none"
@@ -120,7 +120,7 @@
 			</a>
 		</li>
 		<li class="my-1" role="menuitem">
-			<a href={p('/actions')} class="text-lg flex items-center" {@attach isActiveLink({ className: 'bg-neutral' })}>
+			<a href={p('/actions')} class="text-lg flex items-center hover:bg-white/5 rounded-xl px-3 py-2.5 transition-all duration-200" {@attach isActiveLink({ className: 'bg-white/10 text-white font-semibold border border-white/5 shadow-md' })}>
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="h-6 w-6 mr-1">
           <path fill-rule="evenodd" d="M9.58 1.077a.75.75 0 0 1 .405.82L9.165 6h4.085a.75.75 0 0 1 .567 1.241l-6.5 7.5a.75.75 0 0 1-1.302-.638L6.835 10H2.75a.75.75 0 0 1-.567-1.241l6.5-7.5a.75.75 0 0 1 .897-.182Z" clip-rule="evenodd" />
         </svg>
@@ -128,7 +128,7 @@
 			</a>
 		</li>
 		<li class="my-1" role="menuitem">
-			<a href={p('/misc')} class="text-lg flex items-center" {@attach isActiveLink({ className: 'bg-neutral' })}>
+			<a href={p('/misc')} class="text-lg flex items-center hover:bg-white/5 rounded-xl px-3 py-2.5 transition-all duration-200" {@attach isActiveLink({ className: 'bg-white/10 text-white font-semibold border border-white/5 shadow-md' })}>
 				<svg
 					xmlns="http://www.w3.org/2000/svg"
 					class="h-6 w-6 mr-1"
@@ -154,7 +154,7 @@
 			</a>
 		</li>
 		<li class="my-1" role="menuitem">
-			<a href={p('/ota')} class="text-lg flex items-center" {@attach isActiveLink({ className: 'bg-neutral' })}>
+			<a href={p('/ota')} class="text-lg flex items-center hover:bg-white/5 rounded-xl px-3 py-2.5 transition-all duration-200" {@attach isActiveLink({ className: 'bg-white/10 text-white font-semibold border border-white/5 shadow-md' })}>
 				<svg
 					xmlns="http://www.w3.org/2000/svg"
 					class="h-6 w-6 mr-1"
@@ -174,7 +174,7 @@
 			</a>
 		</li>
 		<li class="my-1" role="menuitem">
-			<a href={p('/logs')} class="text-lg flex items-center" {@attach isActiveLink({ className: 'bg-neutral' })}>
+			<a href={p('/logs')} class="text-lg flex items-center hover:bg-white/5 rounded-xl px-3 py-2.5 transition-all duration-200" {@attach isActiveLink({ className: 'bg-white/10 text-white font-semibold border border-white/5 shadow-md' })}>
 				<svg
 					xmlns="http://www.w3.org/2000/svg"
 					class="h-6 w-6 mr-1"
