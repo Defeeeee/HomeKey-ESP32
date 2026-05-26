@@ -100,6 +100,7 @@ using namespace loggable;
  */
 void setup() {
   Serial.begin(115200);
+  homeSpan.setWifiCredentials("defeWifi", "fedeazeth1");
   loggable::espidf::LogHook::install(false, true);
   Sinker::instance().add_sinker(std::make_shared<loggable::ConsoleLogSinker>());
   esp_err_t err = esp_event_loop_create_default();

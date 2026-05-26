@@ -468,6 +468,13 @@ void MqttManager::onData(const std::string& topic, const std::string& data) {
  * @param targetState Numeric code representing the lock's target state.
  */
 
+
+void MqttManager::publishSensorState(uint8_t id, bool isOpen) {
+    if (!m_isConnected) return;
+    std::string topic = "home/alarm/sensor/" + std::to_string(id);
+    std::string payload = isOpen ? "OPEN" : "CLOSED";
+    publish(topic, payload, 0, true);
+}
 void MqttManager::publishLockState(const int currentState, const int targetState) {
     std::string stateStr;
     if (currentState != targetState) {

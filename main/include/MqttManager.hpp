@@ -63,6 +63,13 @@ public:
      */
     void end();
 
+    /**
+      * @brief Publishes the state of a specific security sensor.
+      * @param id Sensor index (1-8).
+      * @param isOpen True if sensor is open/breached.
+      */
+    void publishSensorState(uint8_t id, bool isOpen);
+
 private:
     /**
       * @brief Publishes the current state of the lock.
