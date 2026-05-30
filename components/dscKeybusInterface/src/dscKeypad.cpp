@@ -71,12 +71,16 @@ void dscKeypadInterface::begin(Stream &_stream) {
   #endif
 
   intervalStart = millis();
-
+ 
+  unsigned long startWait = millis();
   unsigned long keybusTime = millis();
   while (millis() - keybusTime < 4000) {  // Waits for the keypad to be powered on
+    if (millis() - startWait > 5000) {
+      break;
+    }
     if (!digitalRead(dscReadPin)) keybusTime = millis();
     #if defined(ESP8266) || defined(ESP32)
-    yield();
+    delay(1);
     #endif
   }
 }
@@ -214,10 +218,19 @@ bool dscKeypadInterface::loop() {
         panelCommandByteTotal = 3;
       }
 
-      // Sets next panel command to 0x05 status command
+      // Sets next panel command to 0x27 status command if zones are open/active, else 0x05 status command
       else {
-        for (byte i = 0; i < 5; i++) panelCommand[i] = panelCommand05[i];
-        panelCommandByteTotal = 5;
+        if (panelZones != 0) {
+          panelCommand27[5] = panelZones;
+          int dataSum = 0;
+          for (byte panelByte = 0; panelByte < 6; panelByte++) dataSum += panelCommand27[panelByte];
+          panelCommand27[6] = dataSum % 256;
+          for (byte i = 0; i < 7; i++) panelCommand[i] = panelCommand27[i];
+          panelCommandByteTotal = 7;
+        } else {
+          for (byte i = 0; i < 5; i++) panelCommand[i] = panelCommand05[i];
+          panelCommandByteTotal = 5;
+        }
       }
     }
     clockCycleCount = 0;
