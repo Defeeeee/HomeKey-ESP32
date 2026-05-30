@@ -323,9 +323,7 @@ extern "C" void user_alarm_loop() {
         
         if (key != '?') {
             Serial.printf("⌨️ [TECLADO DSC] Tecla presionada: [ %c ]\n", key);
-            
-            // Audible feedback on every keypress
-            dsc.beep(1);
+            // (Keypad hardware automatically generates keypress audio feedback)
 
             if (isBypassMode) {
                 if (key >= '1' && key <= '8') {
