@@ -19,22 +19,24 @@ AlarmMode currentMode = DISARMED;
 #define PIN_ZONE_4 25
 #define PIN_ZONE_5 26
 #define PIN_ZONE_6 27
+#define PIN_ZONE_7 32
 
 struct ZoneConfig {
-    uint8_t id;         // ID de Zona (1-based: 1 a 6)
+    uint8_t id;         // ID de Zona (1-based: 1 a 7)
     int pin;            // Pin GPIO en el ESP32
     int sensorIndex;    // Índice en el array 'sensors' (0-based)
     bool lastPinReading;
     unsigned long lastDebounceTime;
 };
 
-ZoneConfig physicalZones[6] = {
+ZoneConfig physicalZones[7] = {
     {1, PIN_ZONE_1, 0, HIGH, 0},
     {2, PIN_ZONE_2, 1, HIGH, 0}, // GPIO 17 para Zona 2
     {3, PIN_ZONE_3, 2, HIGH, 0},
     {4, PIN_ZONE_4, 3, HIGH, 0},
     {5, PIN_ZONE_5, 4, HIGH, 0},
-    {6, PIN_ZONE_6, 5, HIGH, 0}
+    {6, PIN_ZONE_6, 5, HIGH, 0},
+    {7, PIN_ZONE_7, 6, HIGH, 0}
 };
 
 const unsigned long DEBOUNCE_DELAY = 50; // ms
@@ -213,9 +215,9 @@ void print_status() {
 
 extern "C" void user_alarm_setup() { 
     for (auto& zone : physicalZones) {
-        pinMode(zone.pin, INPUT_PULLDOWN);
+        pinMode(zone.pin, INPUT_PULLUP);
         zone.lastPinReading = digitalRead(zone.pin);
-        sensors[zone.sensorIndex] = (zone.lastPinReading == LOW); // LOW = OPEN
+        sensors[zone.sensorIndex] = (zone.lastPinReading == HIGH); // HIGH = OPEN
     }
     currentMode = DISARMED;
 
@@ -451,7 +453,7 @@ extern "C" void user_alarm_loop() {
                 zone.lastDebounceTime = millis();
             }
             if ((millis() - zone.lastDebounceTime) > DEBOUNCE_DELAY) {
-                bool isOpen = (reading == LOW);
+                bool isOpen = (reading == HIGH);
                 if (isOpen != sensors[zone.sensorIndex]) {
                     trigger_zone_change(zone.sensorIndex, isOpen, "HARDWARE");
                 }
