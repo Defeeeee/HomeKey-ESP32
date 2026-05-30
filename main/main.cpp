@@ -166,6 +166,8 @@ void setup() {
     }
   } else {
   nfc_init:
+    // NFC temporarily disabled because hardware is not attached yet
+    /*
     nfcManager = std::make_unique<NfcManager>(*readerDataManager,
                                 miscConfig.nfcPinsPreset == PIN_UNSET ? miscConfig.nfcGpioPins : nfcGpioPinsPresets[miscConfig.nfcPinsPreset].gpioPins,
                                 miscConfig.nfcReaderType,
@@ -174,6 +176,8 @@ void setup() {
                                 miscConfig.hkAuthPrecomputeEnabled,
                                 miscConfig.nfcFastPollingEnabled);
     nfcManager->begin();
+    */
+    ESP_LOGI("Main", "NFC Module disabled (temporarily for hardware bypass)");
   }
   webServerManager->setNfcManager(nfcManager.get());
   webServerManager->setMqttManager(mqttManager.get());
