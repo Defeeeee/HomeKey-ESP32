@@ -208,5 +208,5 @@ void loop() {
   user_alarm_loop();
   if(pollHS)
     homeSpan.poll();
-  vTaskDelay(pdMS_TO_TICKS(50));
+  vTaskDelay(1);
 }

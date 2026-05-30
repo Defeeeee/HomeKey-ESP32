@@ -88,8 +88,10 @@ class dscKeypadInterface {
     byte panelZonesBlink, previousZonesBlink;
     bool startupCycle = true;
     bool setBeep, setTone, setBuzzer;
-    byte commandInterval = 5;   // Sets the milliseconds between panel commands
+    byte commandInterval = 20;   // Sets the milliseconds between panel commands
     unsigned long intervalStart;
+    bool keypadPowered = true;
+    unsigned long lastReadHighTime;
 
     #if defined(ESP32)
     static hw_timer_t * timer1;

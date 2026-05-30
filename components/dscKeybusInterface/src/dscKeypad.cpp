@@ -40,53 +40,148 @@ dscKeypadInterface::dscKeypadInterface(byte setClockPin, byte setReadPin, byte s
 
 void dscKeypadInterface::begin(Stream &_stream) {
   pinMode(dscClockPin, OUTPUT);
-  pinMode(dscReadPin, INPUT);
+  pinMode(dscReadPin, INPUT_PULLUP);
   pinMode(dscWritePin, OUTPUT);
   digitalWrite(dscClockPin, LOW);
   digitalWrite(dscWritePin, LOW);
   stream = &_stream;
 
-  // Platform-specific timers setup the Keybus 1kHz clock signal
-
-  // Arduino/AVR Timer1 calls ISR(TIMER1_OVF_vect)
-  #if defined(__AVR__)
-  TCCR1A = 0;
-  TCCR1B = 0;
-  TCNT1 = clockInterval;
-  TCCR1B |= (1 << CS10);
-
-  // esp8266 timer1 calls dscClockInterrupt()
-  #elif defined(ESP8266)
-  timer1_isr_init();
-  timer1_attachInterrupt(dscClockInterrupt);
-  timer1_write(2500);
-
-  // esp32 timer1 calls dscClockInterrupt()
-  #elif defined(ESP32)
-  timer1 = timerBegin(1, 80, true);
-  timerStop(timer1);
-  timerAttachInterrupt(timer1, &dscClockInterrupt, true);
-  timerAlarmWrite(timer1, 500, true);
-  timerAlarmEnable(timer1);
-  #endif
-
   intervalStart = millis();
- 
-  unsigned long startWait = millis();
-  unsigned long keybusTime = millis();
-  while (millis() - keybusTime < 4000) {  // Waits for the keypad to be powered on
-    if (millis() - startWait > 5000) {
+
+  // Check if the keypad is powered (Read pin is HIGH).
+  // If the Read pin stays LOW for 100ms, we assume the keypad is unpowered.
+  unsigned long startCheck = millis();
+  bool initiallyPowered = false;
+  while (millis() - startCheck < 100) {
+    if (digitalRead(dscReadPin) == HIGH) {
+      initiallyPowered = true;
       break;
     }
-    if (!digitalRead(dscReadPin)) keybusTime = millis();
-    #if defined(ESP8266) || defined(ESP32)
     delay(1);
+  }
+
+  if (initiallyPowered) {
+    keypadPowered = true;
+    lastReadHighTime = millis();
+
+    // Waits for the keypad to be fully powered/ready (shorter stable check)
+    unsigned long startWait = millis();
+    unsigned long keybusTime = millis();
+    while (millis() - keybusTime < 1000) {
+      if (millis() - startWait > 2000) {
+        break;
+      }
+      if (!digitalRead(dscReadPin)) keybusTime = millis();
+      delay(1);
+    }
+  } else {
+    keypadPowered = false;
+    pinMode(dscClockPin, INPUT);
+    pinMode(dscWritePin, INPUT);
+    stream->println("⚠️ [dscKeypad] Keypad is unpowered at startup! Disabling Keybus lines.");
+  }
+
+  // Platform-specific timers setup the Keybus 1kHz clock signal
+  if (keypadPowered) {
+    // Arduino/AVR Timer1 calls ISR(TIMER1_OVF_vect)
+    #if defined(__AVR__)
+    TCCR1A = 0;
+    TCCR1B = 0;
+    TCNT1 = clockInterval;
+    TCCR1B |= (1 << CS10);
+
+    // esp8266 timer1 calls dscClockInterrupt()
+    #elif defined(ESP8266)
+    timer1_isr_init();
+    timer1_attachInterrupt(dscClockInterrupt);
+    timer1_write(2500);
+
+    // esp32 timer1 calls dscClockInterrupt()
+    #elif defined(ESP32)
+    timer1 = timerBegin(1, 80, true);
+    timerStop(timer1);
+    timerAttachInterrupt(timer1, &dscClockInterrupt, true);
+    timerAlarmWrite(timer1, 500, true);
+    timerAlarmEnable(timer1);
     #endif
   }
 }
 
 
 bool dscKeypadInterface::loop() {
+  // Power protection check
+  if (keypadPowered) {
+    if (digitalRead(dscReadPin) == HIGH) {
+      lastReadHighTime = millis();
+    } else {
+      if (millis() - lastReadHighTime > 30) { // Reduced to 30ms for faster detection during brownout
+        keypadPowered = false;
+        #if defined(ESP32)
+        if (timer1 != NULL) {
+          timerStop(timer1);
+        }
+        #elif defined(ESP8266)
+        timer1_disable();
+        #endif
+        pinMode(dscClockPin, INPUT);
+        pinMode(dscWritePin, INPUT);
+        
+        // Purge key buffers immediately to prevent transient ghost keypresses
+        key = 0xFF;
+        keyAvailable = false;
+        keyBufferLength = 0;
+        for (byte i = 0; i < dscBufferSize; i++) {
+          keyBuffer[i] = 0;
+        }
+        
+        stream->println("⚠️ [dscKeypad] Keypad power loss detected! Disabling Keybus lines.");
+      }
+    }
+  } else {
+    static unsigned long powerRestoreStartTime = 0;
+    if (digitalRead(dscReadPin) == LOW) {
+      powerRestoreStartTime = 0;
+    } else {
+      if (powerRestoreStartTime == 0) {
+        powerRestoreStartTime = millis();
+      } else if (millis() - powerRestoreStartTime > 1500) { // Require 1.5 seconds of stable HIGH
+        stream->println("ℹ️ [dscKeypad] Keypad power restored and stabilized! Re-enabling Keybus lines.");
+        keypadPowered = true;
+        powerRestoreStartTime = 0;
+        pinMode(dscClockPin, OUTPUT);
+        pinMode(dscWritePin, OUTPUT);
+        digitalWrite(dscClockPin, LOW);
+        digitalWrite(dscWritePin, LOW);
+        commandReady = true;
+        alarmKeyDetected = false;
+        alarmKeyResponsePending = false;
+        key = 0xFF;
+        keyAvailable = false;
+        keyBufferLength = 0;
+        for (byte i = 0; i < dscBufferSize; i++) {
+          keyBuffer[i] = 0;
+        }
+        previousZones = 0xFF;
+        previousLights = 0xFF;
+        previousBlink = 0xFF;
+        previousZonesBlink = 0xFF;
+        lastReadHighTime = millis();
+        #if defined(ESP32)
+        if (timer1 == NULL) {
+          timer1 = timerBegin(1, 80, true);
+          timerStop(timer1);
+          timerAttachInterrupt(timer1, &dscClockInterrupt, true);
+          timerAlarmWrite(timer1, 500, true);
+          timerAlarmEnable(timer1);
+        }
+        timerStart(timer1);
+        #elif defined(ESP8266)
+        timer1_enable(TIM_DIV16, TIM_EDGE, TIM_LOOP);
+        #endif
+      }
+    }
+    return false;
+  }
 
   // Sets up the next panel command once the previous command is complete
   if (commandReady && millis() - intervalStart >= commandInterval) {
@@ -523,12 +618,12 @@ void IRAM_ATTR dscKeypadInterface::dscClockInterrupt() {
       for (byte i = 0; i < dscReadSize; i++) moduleData[i] = isrModuleData[i];
 
       // Checks for an alarm key press and sets a flag to send panel command 0x1C alarm key verification
-      if (isrModuleData[0] != 0xFF && panelCommand[0] != 0x1C) {
+      if (isrModuleData[0] != 0xFF && panelCommand[0] != 0x1C && digitalRead(dscReadPin) == HIGH) {
         alarmKeyDetected = true;
       }
 
       // Checks for a partition 1 key to save in the key buffer
-      if (isrModuleData[2] != 0xFF && panelCommand[0] == 0x05) {
+      if (panelCommandByteTotal >= 3 && isrModuleData[2] != 0xFF && digitalRead(dscReadPin) == HIGH) {
         if (keyBufferLength >= dscBufferSize) bufferOverflow = true;
         else {
           keyBuffer[keyBufferLength] = isrModuleData[2];

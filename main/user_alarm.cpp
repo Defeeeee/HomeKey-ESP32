@@ -324,6 +324,28 @@ extern "C" void user_alarm_loop() {
         char key = decodeDscKey(rawKey);
         
         if (key != '?') {
+            // Anti-ghosting filter for unpowered keypad:
+            // Unpowered keypad reads stuck low read pin, causing continuous rapid '0' keypresses.
+            static unsigned long lastKeyTime = 0;
+            static char lastKey = '\0';
+            static int rapidZeroCount = 0;
+            unsigned long now = millis();
+            
+            if (key == '0') {
+                if (lastKey == '0' && (now - lastKeyTime < 350)) {
+                    rapidZeroCount++;
+                    lastKeyTime = now;
+                    if (rapidZeroCount >= 3) {
+                        keypadPinBuffer = ""; // Clear any partial PIN accumulated from ghosting
+                    }
+                    return; // Ignore ghost keypress
+                } else {
+                    rapidZeroCount = 0;
+                }
+            }
+            lastKeyTime = now;
+            lastKey = key;
+
             Serial.printf("⌨️ [TECLADO DSC] Tecla presionada: [ %c ]\n", key);
             // (Keypad hardware automatically generates keypress audio feedback)
 
