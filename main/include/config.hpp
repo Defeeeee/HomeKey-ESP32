@@ -99,7 +99,7 @@ namespace espConfig
     mqttConfig_t(){
       std::string id = platform_create_id_string();
       mqttClientId = id;
-      lwtTopic.append(id).append("/" MQTT_LWT_TOPIC);
+      lwtTopic = "home/alarm/status";
       hkTopic.append(id).append("/" MQTT_AUTH_TOPIC);
       lockStateTopic.append(id).append("/" MQTT_STATE_TOPIC);
       lockStateCmd.append(id).append("/" MQTT_SET_STATE_TOPIC);

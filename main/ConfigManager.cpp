@@ -218,6 +218,9 @@ bool ConfigManager::begin() {
   loadConfigFromNvs("MISCDATA");
   loadConfigFromNvs("HTTPSDATA");
 
+  // Force LWT topic to be home/alarm/status for HA alarm panel integration
+  m_mqttConfig.lwtTopic = "home/alarm/status";
+
   ESP_LOGI(TAG, "Initialization complete.");
   return true;
 }
