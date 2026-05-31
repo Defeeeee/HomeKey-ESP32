@@ -1,337 +1,234 @@
 <div align="center">
-  <img width="169" height="200" alt="homekey-logo-200x200" src="https://github.com/user-attachments/assets/6c4bc1e8-c294-4a4b-842a-9837a680b913" />
+  <img width="180" height="180" alt="alarm-system-logo" src="https://github.com/user-attachments/assets/6c4bc1e8-c294-4a4b-842a-9837a680b913" style="border-radius: 36px; box-shadow: 0 10px 25px rgba(0,0,0,0.3);" />
 
-  # HomeKey-ESP32
+  # ESP32 HomeKey-Enabled Alarm System
+  ### *A professional-grade, multi-zone DIY security system with Apple HomeKey support*
+
   [![Discord](https://badgen.net/discord/members/VWpZ5YyUcm?icon=discord)](https://discord.com/invite/VWpZ5YyUcm)
-  [![CI](https://github.com/rednblkx/HomeKey-ESP32/actions/workflows/esp32.yml/badge.svg?branch=main)](https://github.com/rednblkx/HomeKey-ESP32/actions/workflows/esp32.yml)
   [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
   
-  **Apple HomeKey functionality for the rest of us**
+  **A complete burglar alarm control panel featuring native Apple HomeKit & NFC-based Apple HomeKey authentication.**
   
-
-  [Documentation](https://rednblkx.github.io/HomeKey-ESP32/)
+  [Web Interface Documentation](https://rednblkx.github.io/HomeKey-ESP32/)
 
 </div>
 
-## What is HomeKey-ESP32?
+---
 
-The project aims to be the easy DIY solution for using Apple's HomeKey feature without the need to purchase a compatible smart lock that you probably don't want. HomeKey-ESP32 brings Apple's secure NFC-based unlocking to an ESP32 module near you, enabling you to unlock doors and whatnot with a simple tap of your iPhone or Apple Watch.
+## 📌 Project Overview & Scope Pivot
 
-**No proprietary hardware required** – just an ESP32 and a PN532 NFC module
+Originally conceived as an NFC-based smart lock integration, this project has evolved into a **fully featured, DIY Alarm Control Panel** running on an ESP32. Instead of Apple HomeKey being the product itself, **HomeKey (NFC) now serves as the secure, high-speed credential system** to arm, disarm, and manage a complete household security grid.
 
-> [!WARNING]
-> The flash memory is not encrypted as this kinda started as a pet project of mine but a lot of people started using
-> so unfortunately it's stuck like this because migration would be painful and i don't want to be telling people to
-> reconfigure their device if they want to update.
->
-> If you care about this, i'm working on a new project implementing the new Aliro standard and flash will be
-> encrypted first thing, however, honestly don't know when that will be public, you can join the Discord server
-> if you want to know as soon as it is available.
+The system mimics professional panels (like the DSC PowerSeries) by organizing physical and simulated sensors into security zones, enforcing standard Entry/Exit delay grace periods, sounding wailing sirens during breaches, and supporting physical/virtual DSC keypads. Tapping your iPhone or Apple Watch (via Apple HomeKey) instantly disarms the alarm and unlocks the entry point in a single, seamless, sub-300ms transaction.
 
-## Getting Started
+---
 
-### Prerequisites
+## ✨ Features & What We Have Done
 
-- **ESP32 Development Board**
-- **PN532 NFC Module** (SPI interface)
-- **USB Cable** (for flashing and power)
-- **Computer** (Windows, Mac, or Linux)
-- **Basic Electronics Knowledge** (not a problem if you're new to this, ask away!)
+We have built a production-ready, split-architecture system consisting of **ESP32 Controller Firmware** and a high-fidelity **Companion Mobile App**.
 
-#### Ethernet
+### 1. Core Alarm Controller (State Machine)
+We implemented a rigid security state machine running in the firmware (`user_alarm.cpp`) that enforces transition rules and safety measures:
+*   **States**: `DISARMED`, `ARMING_AWAY`, `ARMING_HOME`, `ARMED_AWAY`, `ARMED_HOME`, `ENTRY_DELAY` (Pending), and `TRIGGERED` (Alarm wailing).
+*   **Security Auditing**: Ready check prevents arming if any unbypassed zones are open.
+*   **Entry/Exit Delays**: 15-second configurable count-down grace periods (aligned with DSC standard protocols) to enter/exit before arming or triggering.
 
-The following chips are supported for Ethernet:
+### 2. Physical & Virtual DSC Keypad Integration
+We fully integrated support for legacy hardware keypads (e.g., DSC PowerSeries PK5501/PC1555 keypads) using the DSC Keybus protocol:
+*   **Real-time LED Mirroring**: The ESP32 controls the physical keypad's status LEDs (Ready, Armed, Bypass, Memory, Trouble) to reflect system states in real-time.
+*   **Interactive Command Codes**:
+    *   `*1`: **Zone Bypass Mode** (Bypasses active zones using keys 1-8).
+    *   `*2`: **Trouble Diagnosis Mode** (LED 1 lights up for WiFi disconnection, LED 2 for NFC reader issues).
+    *   `*3`: **Alarm Memory Mode** (Displays which zones triggered the alarm during the last armed period).
+    *   `*4`: **Chime Control** (Toggles entry/exit door chimes).
+    *   `*7`: **Zone Simulation Mode** (Permits testing and sensor toggles without physical hardware triggers).
+    *   `*0` & `*9`: Quick arming in Away and Home modes, respectively.
+*   **Hardware Protections**: Included anti-ghosting filtering to handle unpowered or unstable keypad connections (e.g., filtering false sequential `0` keypresses).
+*   **Code Entry Validation**: Captures 4-digit user PINs to arm and disarm the system.
 
--  W5500
--  DM9051
--  KSZ8851
--  LAN8720 / LAN8710
--  TLK110
--  RTL8201
--  DP83848
--  KSZ8041
--  KSZ8081
+### 3. Multi-Zone Security Matrix
+*   **8 Independent Zones**: Supports up to 8 sensor zones (doors, windows, motion detectors).
+*   **Physical Inputs**: Configured via physical ESP32 GPIOs with internal pull-ups and active low/high triggers.
+*   **Software Debouncing**: Integrated a 50ms software debounce filter to eliminate false triggers on noisy reed switches.
+*   **Bypassing**: Zones can be bypassed individually either via the physical keypad or remotely via MQTT/Home Assistant.
 
-> [!IMPORTANT]
->
-> The following are only supported for ESP32-WROOM-32 boards as other variants lack the internal EMAC needed for the RMII interface:
-> -  LAN8720 / LAN8710
-> -  TLK110
-> -  RTL8201
-> -  DP83848
-> -  KSZ8041
-> -  KSZ8081
+### 4. Apple HomeKey (NFC) Credential System
+*   **PN532 & PN7160 Driver Support**: High-performance NFC drivers supporting SPI/I2C.
+*   **Apple Express Mode**: Authenticate and disarm the system using an iPhone or Apple Watch without waking the device or requiring biometric/passcode checks.
+*   **Power Reserve Support**: Allows entry using Apple Watch/iPhone even when their main batteries are depleted.
+*   **Immediate Feedback**: Taps generate instant audio-visual responses (double-beeps for successful disarm, error chirps on the keypad for failed taps).
 
-### Installation Steps
+### 5. Native Apple HomeKit Integration
+*   Built on the **HomeSpan** framework, exposing the system directly to the iOS/macOS Apple Home app.
+*   Presents itself as a native Security System Accessory, allowing native iOS control.
 
-1. **Download Firmware**
-   - Visit [GitHub Releases](https://github.com/rednblkx/HomeKey-ESP32/releases/latest)
-   - Download the `*.firmware.factory.bin` file
-   - This contains everything you need - no compilation required!
+### 6. Smart Home & MQTT Broker Sync
+*   Publishes alarm states (`disarmed`, `arming`, `armed_away`, `armed_home`, `pending`, `triggered`) and individual zone states (open, closed, bypassed) instantly.
+*   **Home Assistant Autodiscovery**: Automatically exposes alarm control panels and binary sensors to Home Assistant without manual configuration.
 
-2. **Connect Your Hardware**
-   - Wire your PN532 NFC module to your ESP32 using the default pins
-   - Refer to the [detailed wiring guide](https://rednblkx.github.io/HomeKey-ESP32/setup/#21-nfc-module-wiring) for your specific setup
+### 7. Companion Mobile App (`vector-security-app`)
+We designed and built a stunning, iOS-inspired hybrid app using React Native and Expo:
+*   **Glassmorphic Aesthetic**: Premium dark mode UI featuring real-time blurred backgrounds (`expo-blur`), radial glowing status rings, micro-animations, and haptic feedback.
+*   **Real-time WebSocket Sync**: Continuous communication with Home Assistant's WebSocket API to mirror and control states.
+*   **Biometrics Integration**: Secure arming/disarming commands validated through FaceID or TouchID before transmission.
+*   **Sensor Management**: Dedicated zone tab showcasing status (Open, Closed, Bypassed) of all 8 zones with manual bypass sliders.
+*   **Secure Settings**: Persistent configurations secured locally via Android/iOS `expo-secure-store`.
 
-3. **Flash the Firmware**
-   ```bash
-   # Install esptool (one-time setup)
-   pip install esptool
-   
-   # Flash the firmware (replace YOUR_PORT)
-   esptool.py --port /dev/ttyUSB0 write_flash 0x0 firmware.factory.bin
-   ```
-   
-   **Prefer a GUI?** Use the [browser-based flasher](https://espressif.github.io/esptool-js/) - no command line needed!
+---
 
-4. **Initial Setup**
-   - Connect to the device's WiFi AP (`HomeSpan-Setup` / `homespan`)
-   - Access the web interface at `http://192.168.4.1`
-   - Configure your WiFi credentials and HomeKit setup code
-   - Pair with Apple Home using code: `466-37-726`
+## 📐 System Architecture
 
-5. **Start Using HomeKey!**
-   - Hold your iPhone or Apple Watch near the NFC reader
-   - Enjoy instant, secure access to your home! 🎉
+The following diagram illustrates how the hardware modules, firmware logic, MQTT broker, and mobile app interface together:
 
-## System Architecture
-
-<div align="center">
-  
 ```mermaid
 graph TD
-    A[iPhone/Apple Watch] -->|NFC| B[PN532 Module]
-    B -->|SPI| C[ESP32]
-    C -->|MQTT| D[Home Assistant/Broker]
-    C -->|HomeKit| E[Apple Home]
-    C -->|HTTP| F[Web Interface]
-    C -->|GPIO| G[Physical Lock]
+    %% Users & Devices
+    Watch[Apple Watch / iPhone] -->|NFC Apple HomeKey| NFC[PN532 / PN7160 Reader]
+    Keypad[Physical DSC Keypad] -->|DSC Keybus| ESP[ESP32 Main Control Unit]
+    Sensors[Physical GPIO Sensors 1-8] -->|Dry Contact / Reed| ESP
     
-    subgraph "HomeKey-ESP32 Core"
-        C
-        H[ConfigManager]
-        I[LockManager]
-        J[NfcManager]
-        K[HomeKitLock]
-        L[WebServerManager]
-        M[MqttManager]
+    %% ESP32 Internal Logic
+    subgraph ESP32 ["ESP32 Controller Firmware"]
+        NFC -->|SPI/I2C| NfcMgr[NfcManager]
+        Keypad <-->|GPIO Clk-R-W| UserAlarm[user_alarm State Machine]
+        Sensors -->|GPIO Interrupts| HwMgr[HardwareManager]
+        
+        NfcMgr -->|Valid Token Verified| UserAlarm
+        HwMgr -->|Debounced Zone Open/Close| UserAlarm
+        
+        UserAlarm -->|Buzzer / LEDs| Keypad
+        UserAlarm -->|Trigger Wailing Siren| Siren[Physical Siren / Relay]
+        
+        Config[ConfigManager] <-->|Persists Data| NVS[(NVS Flash)]
+        WebServer[WebServerManager] <-->|OTA / Config Webpage| WebUI[Browser UI]
     end
+
+    %% Network & Integrations
+    UserAlarm <-->|HomeKit Protocol| HomeSpan[HomeSpan Bridge]
+    UserAlarm <-->|MQTT Status & Cmds| MQTT[MQTT Broker]
     
-    style A fill:#1f2937,stroke:#374151,color:#fff
-    style C fill:#059669,stroke:#047857,color:#fff
-    style B fill:#3b82f6,stroke:#2563eb,color:#fff
+    HomeSpan <-->|Native Hub Integration| AppleHome[Apple Home App]
+    MQTT <-->|Auto-Discovery| HA[Home Assistant]
+    
+    %% Companion App
+    HA <-->|WebSocket Stream| App[Mobile Companion App]
+    App -->|Biometric/PIN Verification| AppAction[Arm / Disarm / Bypass]
+    AppAction -->|WS Commands| HA
+
+    style ESP fill:#111827,stroke:#3b82f6,stroke-width:2px,color:#fff
+    style UserAlarm fill:#1e3a8a,stroke:#3b82f6,color:#fff
+    style NFC fill:#065f46,stroke:#10b981,color:#fff
+    style Keypad fill:#7c2d12,stroke:#ea580c,color:#fff
+    style App fill:#5b21b6,stroke:#8b5cf6,color:#fff
+    style HA fill:#1e293b,stroke:#475569,color:#fff
 ```
 
-</div>
+---
 
-## ✨ Key Features
-
-### **Apple HomeKey Integration**
-- **Express Mode**: Unlock without waking your device
-- **Power Reserve**: Unlock even when the device needs to be charged
-- **Multi-Device Support**: Works with iPhone and Apple Watch
-- **Fast Authentication**: Sub-300ms unlock times
-
-### **Smart Home Ready**
-- **HomeKit Native**: Full Apple Home ecosystem integration
-- **MQTT Support**: Connect to Home Assistant, OpenHAB, and other platforms
-- **Home Assistant Discovery**: Automatic device detection and configuration
-- **Custom States**: Support for complex lock states (jamming, unlocking, etc.)
-
-### **Modern Web Interface**
-- **Svelte Frontend**: Responsive, modern UI built with Svelte 5 + Tailwind CSS
-- **Real-time Updates**: WebSocket-powered live status updates
-- **OTA Updates**: Over-the-air firmware updates via web interface
-- **Configuration Management**: Easy setup without recompiling
-
-### **Developer Friendly**
-- **Open Source**: MIT licensed, community-driven development
-- **Modular Architecture**: Clean separation of concerns
-- **Event System**: Pub/sub architecture for extensibility
-- **Comprehensive Logging**: Debug and monitor with detailed logs
-
-## Development
-
-<div align="center">
-  
-```mermaid
-graph TD
-  %% External Systems & Hardware
-  subgraph "External World"
-      A[iPhone / Apple Watch]
-      B[Apple Home]
-      C[Web Browser]
-      D[MQTT Broker]
-      E[Physical Lock, Buttons & LEDs]
-  end
-
-  %% Main Application on ESP32
-  subgraph "HomeKey-ESP32 Core"
-      
-      subgraph "Interface Managers (I/O)"
-          direction LR
-          Nfc[NfcManager]
-          HK[HomeKitLock]
-          Web[WebServerManager]
-          Mqtt[MqttManager]
-          Hw[HardwareManager]
-      end
-
-      subgraph "Logic Core (State Machine)"
-          Lock[LockManager]
-      end
-
-      subgraph "Data Services (Persistence)"
-          direction LR
-          Config[ConfigManager]
-          Reader[ReaderDataManager]
-          NVS[(NVS Storage)]
-      end
-
-      %% High-level Data and Control Flow
-      DataServices[Data Services] -- "Provides Config & Reader Data" --> InterfaceManagers[Interface Managers]
-      DataServices -- "Provides Config" --> LogicCore[Logic Core]
-      Config -- "Reads/Writes" --> NVS
-      Reader -- "Reads/Writes" --> NVS
-      
-      InterfaceManagers -- "State Change Requests (e.g., Unlock)" --> Lock
-      Lock -- "Actions & State Updates" --> InterfaceManagers
-  end
-  
-  %% Connections to the External World
-  A -- NFC --> Nfc
-  B -- HomeKit --> HK
-  C -- HTTP/WebSocket --> Web
-  D -- MQTT --> Mqtt
-  E -- GPIO --> Hw
-  
-  Hw -- GPIO --> E
-  HK -- HomeKit --> B
-  Web -- HTTP/WebSocket --> C
-  Mqtt -- MQTT --> D
-
-  %% Styling for clarity
-  style A fill:#1f2937,stroke:#374151,color:#fff
-  style B fill:#1f2937,stroke:#374151,color:#fff
-  style C fill:#1f2937,stroke:#374151,color:#fff
-  style D fill:#1f2937,stroke:#374151,color:#fff
-  style E fill:#1f2937,stroke:#374151,color:#fff
-
-  style Nfc fill:#3b82f6,stroke:#2563eb,color:#fff
-  style HK fill:#059669,stroke:#047857,color:#fff
-  style Web fill:#f59e0b,stroke:#d97706,color:#fff
-  style Mqtt fill:#ef4444,stroke:#dc2626,color:#fff
-  style Hw fill:#8b5cf6,stroke:#7c3aed,color:#fff
-
-  style Lock fill:#ec4899,stroke:#db2777,color:#fff
-  
-  style Config fill:#6b7280,stroke:#4b5563,color:#fff
-  style Reader fill:#6b7280,stroke:#4b5563,color:#fff
-  style NVS fill:#9ca3af,stroke:#6b7280,color:#fff
-```
-
-</div>
-
-### Project Structure
+## 📂 Firmware Project Directory Structure
 
 ```
-HomeKey-ESP32/
-├── main/                    # Core ESP32 application
-│   ├── main.cpp            # Application entry point
-│   ├── ConfigManager.cpp    # Configuration management
-│   ├── ReaderDataManager.cpp # Reader data management
-│   ├── NfcManager.cpp      # NFC communication
-│   ├── HomeKitLock.cpp     # HomeKit integration
-│   ├── LockManager.cpp     # Lock state management
-│   ├── MqttManager.cpp     # MQTT client
-│   ├── WebServerManager.cpp # Web interface
-│   ├── WebSocketLogSinker.cpp # WebSocket logging sinker
-│   ├── HardwareManager.cpp # Hardware manager
-│   └── HKServices.cpp # HomeKit services
-├── data/                   # Web interface files
-│   ├── src/               # Vue.js application
-│   └── index.html         # Web UI entry point
-├── components/            # External dependencies
-│   ├── HK-HomeKit-Lib/   # HomeKey implementation
-│   ├── HomeSpan/         # HomeKit framework
-│   └── PN532/            # NFC driver
-└── docs/                 # Documentation
-    └── content/          # Hugo documentation
+alarma-homekey-arduino/
+├── main/                       # Core ESP-IDF / C++ application source
+│   ├── main.cpp                # System Entrypoint & manager startup
+│   ├── user_alarm.cpp          # Core Alarm State Machine & Zone Matrix
+│   ├── HardwareManager.cpp     # GPIO monitoring & zone debouncer
+│   ├── NfcManager.cpp          # HomeKey NFC protocol handler
+│   ├── HomeKitLock.cpp         # HomeSpan/HomeKit device bridge
+│   ├── MqttManager.cpp         # Home Assistant MQTT integration
+│   ├── WebServerManager.cpp    # Config Web UI, Websocket Server & OTA
+│   ├── ConfigManager.cpp       # EEPROM/NVS parameters manager
+│   ├── ReaderDataManager.cpp   # HomeKey credential verification
+│   └── include/                # Header Declarations
+│       ├── user_alarm.h        # Public alarm control interfaces
+│       ├── config.hpp          # Persistent storage structs
+│       └── defaults.h          # Hardcoded fallbacks & GPIO presets
+├── components/                 # Git submodules & libraries
+│   ├── HK-HomeKit-Lib/         # Under-the-hood Apple HomeKey cryptographic engine
+│   ├── HomeSpan/               # HomeKit Accessory Protocol (HAP) engine
+│   └── PN532/                  # NFC chip drivers
+├── data/                       # Svelte 5 Web interface build files
+└── docs/                       # Project static pages (Hugo site source)
 ```
 
-### Core Components
+---
 
-| Component | File | Purpose |
-|-----------|------|---------|
-| **NFC Manager** | [`NfcManager.cpp`](main/NfcManager.cpp) | Handles PN532 communication and HomeKey authentication |
-| **HomeKit Bridge** | [`HomeKitLock.cpp`](main/HomeKitLock.cpp) | Manages Apple HomeKit integration and pairing |
-| **Lock Manager** | [`LockManager.cpp`](main/LockManager.cpp) | Controls lock state transitions and GPIO actions |
-| **MQTT Client** | [`MqttManager.cpp`](main/MqttManager.cpp) | Enables smart home integration via MQTT |
-| **Web Server** | [`WebServerManager.cpp`](main/WebServerManager.cpp) | Provides configuration UI and OTA updates |
-| **Config Manager** | [`ConfigManager.cpp`](main/ConfigManager.cpp) | Handles persistent configuration storage |
+## 🛠️ Getting Started & Wiring
 
-### Building from Source
+### 1. Prerequisites
+*   **ESP32 Development Board** (ESP32-WROOM-32 or ESP32-S3).
+*   **NFC Module**: PN532 (SPI recommended) or PN7160 (I2C).
+*   **DSC Keypad**: PowerSeries PC1555 / PK5501 (optional, for physical interface).
+*   **Sensors**: Magnetic door reed switches, PIR motion sensors, or limit switches.
+
+### 2. Wiring Connections
+
+#### NFC Module (PN532 SPI)
+| PN532 Pin | ESP32 GPIO | Description |
+|-----------|------------|-------------|
+| VCC       | 5V / 3.3V  | Power |
+| GND       | GND        | Ground |
+| SCK       | GPIO 14    | SPI Clock |
+| MISO      | GPIO 12    | SPI Master In Slave Out |
+| MOSI      | GPIO 13    | SPI Master Out Slave In |
+| SS/CS     | GPIO 15    | SPI Chip Select |
+
+#### DSC Keypad Keybus
+Connection requires interfacing with the keypad's green (data out) and yellow (clock) lines. Use level-shifting transistors or resistor dividers if stepping down from the DSC 12V logic levels to ESP32 3.3V logic.
+*   **DSC Clock (Yellow)** $\rightarrow$ **GPIO 21**
+*   **DSC Read (Green - Keypad to Panel)** $\rightarrow$ **GPIO 18**
+*   **DSC Write (Green - Panel to Keypad)** $\rightarrow$ **GPIO 19**
+
+#### Zone Sensors (Zones 1-8)
+Connect dry contacts between the designated GPIO and GND. The firmware configures internal pull-ups.
+*   **Zone 1 (Entry/Exit door)**: GPIO 13
+*   **Zone 2**: GPIO 17
+*   **Zone 3**: GPIO 14
+*   **Zone 4**: GPIO 25
+*   **Zone 5**: GPIO 26
+*   **Zone 6**: GPIO 27
+*   **Zone 7**: GPIO 32
+*   **Zone 8**: Configurable / Virtual
+
+---
+
+## 💻 Compilation & Flashing
+
+This project uses the **ESP-IDF v5.1+** toolchain.
 
 ```bash
-# Install dependencies
-git submodule update --init --recursive
+# 1. Clone repository and initialize submodules
+git clone --recursive https://github.com/Defeeeee/HomeKey-ESP32.git
+cd HomeKey-ESP32
 
-# Install esp-idf (see https://docs.espressif.com/projects/esp-idf/en/latest/esp32/get-started/index.html#get-started)
-
-# Build firmware
+# 2. Set targets and build
+idf.py set-target esp32
 idf.py build
 
-# Flash to device
-idf.py -p /dev/ttyUSB0 flash
-
-# Monitor output
-idf.py monitor
+# 3. Flash to ESP32 and monitor output
+idf.py -p /dev/ttyUSB0 flash monitor
 ```
 
-### Contributing
+---
 
-Contributions are welcomed! Please see the [Contributing Guidelines](CONTRIBUTING.md) for details.
+## 📱 Companion Mobile App (`vector-security-app`)
 
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'feat: Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request against the `main` branch
+The companion mobile app is stored in the `vector-security-app` workspace. It works side-by-side with the ESP32 through Home Assistant.
 
-## Support the Project
+### How to Install and Run:
+1.  Navigate to `/Users/defeee/PycharmProjects/app-alarma/vector-security-app`.
+2.  Install dependencies:
+    ```bash
+    npm install
+    ```
+3.  Start the Expo development server:
+    ```bash
+    npx expo start
+    ```
+4.  Open the iOS Simulator (`i`) or scan the QR code using your physical device.
 
-HomeKey-ESP32 is openly developed and maintained by the community. Your support helps us continue improving the project.
+---
 
-- **Star the repository** to show your appreciation
-- **Report bugs** to help improve stability
-- **Suggest features** to guide development
-- **Share the project** with your network
-- **Contribute documentation** to help others
-
-## Credits
-
-- **[@kormax](https://github.com/kormax)**: Reverse-engineered the HomeKey NFC protocol and published the foundational [PoC implementation](https://github.com/kormax/apple-home-key-reader)
-- **[@kupa22](https://github.com/kupa22)**: Researched the HAP (HomeKit Accessory Protocol) side of HomeKey
-- **[HomeSpan](https://github.com/HomeSpan/HomeSpan)**: Excellent HomeKit framework that powers our integration
-- **[ESP-IDF](https://github.com/espressif/esp-idf)**: Robust IoT development framework from Espressif
-
-## License & Legal
-
-### License
-
-This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) file for details.
-
-### Disclaimer
-
-**Important**: This project implements Apple HomeKey functionality through reverse engineering. While we strive for security and compatibility:
-
-- **Not affiliated** in any shape or form nor condoned by Apple Inc.
-- **Use at your own risk** for security-critical applications
-- **May lack elements** from Apple's private specifications
-- **Subject to change** as Apple updates their protocols
-
-### Trademarks
-
-- **Apple**, **iPhone**, and **Apple Watch** are trademarks of Apple Inc.
-- **ESP32** is a trademark of Espressif Systems (Shanghai) Co., Ltd.
-- **Home Assistant** is a trademark of Open Home Foundation
+## ⚖️ Disclaimer & License
+*   This project is licensed under the **MIT License**.
+*   **Disclaimer**: This project implements Apple HomeKey functionality through reverse engineering. Use at your own risk in security-critical environments. Not affiliated with Apple Inc. or DSC Tyco Security Products.
