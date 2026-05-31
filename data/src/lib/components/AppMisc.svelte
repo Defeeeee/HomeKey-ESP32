@@ -38,6 +38,13 @@
 		e.preventDefault();
 		try {
 			if (!miscConfig || !misc) return;
+			if (miscConfig.alarmCode) {
+				const pinRegex = /^[0-9]{4}$/;
+				if (!pinRegex.test(miscConfig.alarmCode)) {
+					alert("Alarm PIN code must be exactly 4 digits (0-9).");
+					return;
+				}
+			}
 			const result = await saveConfig("misc", diff(misc, miscConfig));
 			if (result.success) {
 				miscConfig = result.data;
@@ -554,7 +561,6 @@
 											bind:value={miscConfig.alarmCode}
 											placeholder="1234"
 											maxlength="4"
-											pattern="[0-9]{4}"
 											class="input input-sm input-bordered w-full"
 											required
 											inputmode="numeric"
