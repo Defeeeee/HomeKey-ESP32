@@ -15,6 +15,7 @@
 #include "HK_HomeKit.h"
 #include "esp_mac.h"
 #include "utils.hpp"
+#include "include/user_alarm.h"
 
 const char* HomeKitLock::TAG = "HomeKitBridge";
 static HomeKitLock* s_instance = nullptr;
@@ -216,6 +217,12 @@ void HomeKitLock::begin() {
         ESP_LOGI(TAG, "Received lock state event (SYNC): Current:%d Target:%d", s.currentState, s.targetState);
         updateLockState(s.currentState, s.targetState);
     });
+    m_alarm_event = AppEventLoop::subscribe(ALARM_EVENT, ALARM_STATE_CHANGED, [&](const uint8_t* data, size_t size){
+        if(size == 0 || data == nullptr) return;
+        std::string state(reinterpret_cast<const char*>(data), size);
+        ESP_LOGI(TAG, "HomeKit received alarm state event: %s", state.c_str());
+        updateAlarmState(state);
+    });
     const auto& miscConfig = m_configManager.getConfig<espConfig::misc_config_t>();
     const auto& app_version = esp_app_get_description()->version;
     ESP_LOGI(TAG, "Starting HomeSpan setup...");
@@ -247,6 +254,18 @@ void HomeKitLock::begin() {
       if(miscConfig.proxBatEnabled) {
           new PhysicalLockBatteryService(*this);
       }
+
+    new SpanAccessory();
+      new Service::AccessoryInformation();
+        new Characteristic::Name((std::string(miscConfig.deviceName.c_str()) + " Alarm").c_str());
+        new Characteristic::Manufacturer("rednblkx");
+        new Characteristic::Model("ESP32-AlarmPanel");
+        uint8_t amac[6];
+        esp_read_mac(amac, ESP_MAC_BT);
+        const std::string amacStr = fmt::format("HK-ALARM-{:02X}{:02X}{:02X}{:02X}", amac[2], amac[3], amac[4], amac[5]);
+        new Characteristic::SerialNumber(amacStr.c_str());
+        new Characteristic::Identify();
+      new SecuritySystemService(*this);
 
     setupDebugCommands();
     
@@ -486,3 +505,46 @@ void HomeKitLock::controllerCallback() {
         }
     }
 }
+
+HomeKitLock::SecuritySystemService::SecuritySystemService(HomeKitLock& bridge) {
+    ESP_LOGI(HomeKitLock::TAG, "Configuring SecuritySystem");
+    m_currentState = bridge.m_alarmCurrentState = new Characteristic::SecuritySystemCurrentState(3, true); // default 3 = Disarmed
+    m_targetState = bridge.m_alarmTargetState = new Characteristic::SecuritySystemTargetState(3, true); // default 3 = Disarmed
+}
+
+boolean HomeKitLock::SecuritySystemService::update() {
+    if (m_targetState->updated()) {
+        int val = m_targetState->getNewVal();
+        ESP_LOGI(HomeKitLock::TAG, "HomeKit SecuritySystem requested target state: %d", val);
+        if (val == 3) {
+            user_alarm_disarm();
+        } else if (val == 1) {
+            user_alarm_arm_away();
+        } else if (val == 0 || val == 2) {
+            user_alarm_arm_home();
+        }
+    }
+    return true;
+}
+
+void HomeKitLock::updateAlarmState(const std::string& state) {
+    if (!m_alarmCurrentState || !m_alarmTargetState) return;
+
+    if (state == "disarmed") {
+        if (m_alarmCurrentState->getVal() != 3) m_alarmCurrentState->setVal(3);
+        if (m_alarmTargetState->getVal() != 3) m_alarmTargetState->setVal(3);
+    } else if (state == "armed_away") {
+        if (m_alarmCurrentState->getVal() != 1) m_alarmCurrentState->setVal(1);
+        if (m_alarmTargetState->getVal() != 1) m_alarmTargetState->setVal(1);
+    } else if (state == "armed_home") {
+        if (m_alarmCurrentState->getVal() != 0) m_alarmCurrentState->setVal(0);
+        if (m_alarmTargetState->getVal() != 0) m_alarmTargetState->setVal(0);
+    } else if (state == "arming" || state == "arming_away") {
+        if (m_alarmTargetState->getVal() != 1) m_alarmTargetState->setVal(1);
+    } else if (state == "arming_home") {
+        if (m_alarmTargetState->getVal() != 0) m_alarmTargetState->setVal(0);
+    } else if (state == "triggered") {
+        if (m_alarmCurrentState->getVal() != 4) m_alarmCurrentState->setVal(4);
+    }
+}
+
