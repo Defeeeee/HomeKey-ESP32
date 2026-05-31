@@ -510,11 +510,6 @@ void dscKeypadInterface::tone(byte beep, bool tone, byte interval) {
 
 
 void dscKeypadInterface::buzzer(byte seconds) {
-  if (!seconds) {
-    setBuzzer = false;
-    return;
-  }
-
   panelCommand7F[1] = seconds;
 
   int dataSum = 0;
