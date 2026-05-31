@@ -38,6 +38,13 @@ dscKeypadInterface::dscKeypadInterface(byte setClockPin, byte setReadPin, byte s
 }
 
 
+void dscKeypadInterface::setPins(byte setClockPin, byte setReadPin, byte setWritePin) {
+  dscClockPin = setClockPin;
+  dscReadPin = setReadPin;
+  dscWritePin = setWritePin;
+}
+
+
 void dscKeypadInterface::begin(Stream &_stream) {
   pinMode(dscClockPin, OUTPUT);
   pinMode(dscReadPin, INPUT_PULLUP);
@@ -81,30 +88,35 @@ void dscKeypadInterface::begin(Stream &_stream) {
     stream->println("⚠️ [dscKeypad] Keypad is unpowered at startup! Disabling Keybus lines.");
   }
 
-  // Platform-specific timers setup the Keybus 1kHz clock signal
+  // Platform-specific timers setup the Keybus 1kHz clock signal (always initialized)
+  #if defined(__AVR__)
+  TCCR1A = 0;
+  TCCR1B = 0;
+  TCNT1 = clockInterval;
   if (keypadPowered) {
-    // Arduino/AVR Timer1 calls ISR(TIMER1_OVF_vect)
-    #if defined(__AVR__)
-    TCCR1A = 0;
-    TCCR1B = 0;
-    TCNT1 = clockInterval;
     TCCR1B |= (1 << CS10);
-
-    // esp8266 timer1 calls dscClockInterrupt()
-    #elif defined(ESP8266)
-    timer1_isr_init();
-    timer1_attachInterrupt(dscClockInterrupt);
-    timer1_write(2500);
-
-    // esp32 timer1 calls dscClockInterrupt()
-    #elif defined(ESP32)
-    timer1 = timerBegin(1, 80, true);
-    timerStop(timer1);
-    timerAttachInterrupt(timer1, &dscClockInterrupt, true);
-    timerAlarmWrite(timer1, 500, true);
-    timerAlarmEnable(timer1);
-    #endif
   }
+
+  // esp8266 timer1 calls dscClockInterrupt()
+  #elif defined(ESP8266)
+  timer1_isr_init();
+  timer1_attachInterrupt(dscClockInterrupt);
+  timer1_write(2500);
+  if (!keypadPowered) {
+    timer1_disable();
+  }
+
+  // esp32 timer1 calls dscClockInterrupt()
+  #elif defined(ESP32)
+  timer1 = timerBegin(1, 80, true);
+  timerStop(timer1);
+  timerAttachInterrupt(timer1, &dscClockInterrupt, true);
+  timerAlarmWrite(timer1, 500, true);
+  timerAlarmEnable(timer1);
+  if (keypadPowered) {
+    timerStart(timer1);
+  }
+  #endif
 }
 
 
@@ -114,7 +126,7 @@ bool dscKeypadInterface::loop() {
     if (digitalRead(dscReadPin) == HIGH) {
       lastReadHighTime = millis();
     } else {
-      if (millis() - lastReadHighTime > 30) { // Reduced to 30ms for faster detection during brownout
+      if (millis() - lastReadHighTime > 5000) { // Set to 5000ms (5 seconds) to prevent false disconnections during keypresses
         keypadPowered = false;
         #if defined(ESP32)
         if (timer1 != NULL) {
@@ -152,6 +164,13 @@ bool dscKeypadInterface::loop() {
         pinMode(dscWritePin, OUTPUT);
         digitalWrite(dscClockPin, LOW);
         digitalWrite(dscWritePin, LOW);
+        #if defined(ESP32)
+        if (timer1 != NULL) {
+          timerStart(timer1);
+        }
+        #elif defined(ESP8266)
+        timer1_enable();
+        #endif
         commandReady = true;
         alarmKeyDetected = false;
         alarmKeyResponsePending = false;

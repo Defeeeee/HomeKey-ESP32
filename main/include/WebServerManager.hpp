@@ -192,6 +192,7 @@ private:
   std::mutex m_wsClientsMutex;
   esp_timer_handle_t m_statusTimer;
   std::deque<std::vector<uint8_t>> m_wsBroadcastBuffer;
+  AppEventLoop::SubscriptionHandle m_alarm_event;
 
 
   std::atomic<bool> m_otaInProgress{false};

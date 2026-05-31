@@ -10,6 +10,9 @@ void user_alarm_arm_away();
 void user_alarm_failed_tap();
 const char* user_alarm_get_state_string();
 bool user_alarm_get_sensor_state(int id);
+bool user_alarm_is_zone_bypassed(int zoneIdx);
+void user_alarm_set_zone_bypass(int zoneIdx, bool bypassed);
+bool user_alarm_is_zone_disabled(int zoneIdx);
 #ifdef __cplusplus
 }
 #endif

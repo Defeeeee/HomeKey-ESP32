@@ -35,6 +35,7 @@ class dscKeypadInterface {
 
   public:
     dscKeypadInterface(byte setClockPin, byte setReadPin, byte setWritePin);
+    void setPins(byte setClockPin, byte setReadPin, byte setWritePin);
 
     // Interface control
     void begin(Stream &_stream = Serial);                            // Initializes the stream output to Serial by default

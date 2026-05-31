@@ -76,12 +76,12 @@ struct nfcGpioPins_t {
 static const std::array<nfcGpioPins_t,5> nfcGpioPinsPresets = {
     {
       // PN532
-    {"Default", 0, {SS_PIN, SCK_PIN, MISO_PIN, MOSI_PIN}},
+    {"Default", 0, {255, 255, 255, 255}},
     {"@lollokara's board", 0, {6, 5, 4, 7}},
     {"CASmo-NFC", 0, {5, 18, 19, 23}},
     {"CASmo-NFC-MB-ETH", 0, {5, 14, 12, 13}},
       // PN7161
-    {"Default", 1, {SS_PIN, SCK_PIN, MISO_PIN, MOSI_PIN}}
+    {"Default", 1, {255, 255, 255, 255}}
     }
 };
 
@@ -167,6 +167,7 @@ namespace espConfig
     std::string otaPasswd = OTA_PWD;
     uint8_t hk_key_color = HOMEKEY_COLOR;
     std::string setupCode = SETUP_CODE;
+    std::string alarmCode = "1234";
     bool lockAlwaysUnlock = HOMEKEY_ALWAYS_UNLOCK;
     bool lockAlwaysLock = HOMEKEY_ALWAYS_LOCK;
     bool hkAuthPrecomputeEnabled = HK_AUTH_PRECOMPUTE_ENABLED;
@@ -181,7 +182,7 @@ namespace espConfig
     std::string webPassword = WEB_AUTH_PASSWORD;
     bool webHttpsEnabled = false;
     uint8_t nfcPinsPreset = 255;
-    std::array<uint8_t, 4> nfcGpioPins{SS_PIN, SCK_PIN, MISO_PIN, MOSI_PIN};
+    std::array<uint8_t, 4> nfcGpioPins{255, 255, 255, 255};
     uint8_t btrLowStatusThreshold = BTR_PROX_BAT_LOW_THRESHOLD;
     bool proxBatEnabled = BTR_PROX_BAT_ENABLED;
     bool ethernetEnabled = ETH_ENABLED;
@@ -192,6 +193,25 @@ namespace espConfig
     std::array<uint8_t, 7> ethSpiConfig = {ETH_SPI_CONF_SPI_FREQ_MHZ, ETH_SPI_CONF_PIN_CS, ETH_SPI_CONF_PIN_IRQ, ETH_SPI_CONF_PIN_RST, ETH_SPI_CONF_PIN_SCK, ETH_SPI_CONF_PIN_MISO, ETH_SPI_CONF_PIN_MOSI};
     uint8_t logLevel = ESP_LOG_ERROR;
     uint8_t armedHomeZones = 0xFF;
+    uint8_t dscClockPin = 21;
+    uint8_t dscReadPin = 18;
+    uint8_t dscWritePin = 19;
+    uint8_t zonePin1 = 13;
+    uint8_t zonePin2 = 17;
+    uint8_t zonePin3 = 14;
+    uint8_t zonePin4 = 25;
+    uint8_t zonePin5 = 26;
+    uint8_t zonePin6 = 27;
+    uint8_t zonePin7 = 32;
+    uint8_t zonePin8 = 255;
+    bool zoneDisabled1 = false;
+    bool zoneDisabled2 = false;
+    bool zoneDisabled3 = false;
+    bool zoneDisabled4 = false;
+    bool zoneDisabled5 = false;
+    bool zoneDisabled6 = false;
+    bool zoneDisabled7 = false;
+    bool zoneDisabled8 = false;
   };
   struct actions_config_t {
     enum colorMap

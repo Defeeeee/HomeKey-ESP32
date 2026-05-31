@@ -1,4 +1,5 @@
 #include "include/user_alarm.h"
+#include <WiFi.h>
 #include <algorithm>
 #include <cstdint>
 #include <memory>
@@ -100,6 +101,13 @@ using namespace loggable;
  */
 void setup() {
   Serial.begin(115200);
+  IPAddress local_IP(192, 168, 68, 200);
+  IPAddress gateway(192, 168, 68, 1);
+  IPAddress subnet(255, 255, 255, 0);
+  IPAddress dns(1, 1, 1, 1);
+  if (!WiFi.config(local_IP, gateway, subnet, dns)) {
+    ESP_LOGE("Main", "WiFi.config failed to apply static IP");
+  }
   homeSpan.setWifiCredentials("defeWifi", "fedeazeth1");
   loggable::espidf::LogHook::install(false, true);
   Sinker::instance().add_sinker(std::make_shared<loggable::ConsoleLogSinker>());

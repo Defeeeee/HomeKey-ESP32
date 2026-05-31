@@ -14,6 +14,8 @@
 
   let alarm_state = $derived(systemInfo?.alarm_state || 'disarmed');
   let alarm_zones = $derived(systemInfo?.alarm_zones || [false, false, false, false, false, false, false, false]);
+  let alarm_bypassed = $derived(systemInfo?.alarm_bypassed || [false, false, false, false, false, false, false, false]);
+  let alarm_disabled = $derived(systemInfo?.alarm_disabled || [false, false, false, false, false, false, false, false]);
 
   let isSimMode = $state(false);
   let displayError = $derived(isSimMode ? null : error);
@@ -145,9 +147,41 @@
 
   // Simulator state variables
   let simTimerId: any = null;
-  let exitDelaySecondsLeft = $state(10);
+  let exitDelaySecondsLeft = $state(15);
   let entryDelaySecondsLeft = $state(15);
   let armedModeBeforeSimDelay = 'disarmed';
+
+  $effect(() => {
+    if (!isSimMode) {
+      if (alarm_state === 'arming_away' || alarm_state === 'arming_home') {
+        exitDelaySecondsLeft = 15;
+        const interval = setInterval(() => {
+          if (exitDelaySecondsLeft > 0) {
+            exitDelaySecondsLeft--;
+          } else {
+            clearInterval(interval);
+          }
+        }, 1000);
+        return () => clearInterval(interval);
+      }
+    }
+  });
+
+  $effect(() => {
+    if (!isSimMode) {
+      if (alarm_state === 'pending') {
+        entryDelaySecondsLeft = 15;
+        const interval = setInterval(() => {
+          if (entryDelaySecondsLeft > 0) {
+            entryDelaySecondsLeft--;
+          } else {
+            clearInterval(interval);
+          }
+        }, 1000);
+        return () => clearInterval(interval);
+      }
+    }
+  });
 
   function stopAllSimulation() {
     if (simTimerId) {
@@ -197,6 +231,7 @@
     stopAllSimulation();
     systemInfo.alarm_state = state;
     systemInfo.alarm_zones = [false, false, false, false, false, false, false, false];
+    systemInfo.alarm_bypassed = [false, false, false, false, false, false, false, false];
   }
 
   const setAlarmState = (state: string) => {
@@ -208,8 +243,8 @@
         setTimeout(() => playShortBeep(659.25, 0.15), 100);
       } else if (state === 'ARMED_AWAY') {
         setAlarmStateLocal('arming_away');
-        addSimLog("Arming Away started. Exit delay active (10s).");
-        exitDelaySecondsLeft = 10;
+        addSimLog("Arming Away started. Exit delay active (15s).");
+        exitDelaySecondsLeft = 15;
         simTimerId = setInterval(() => {
           exitDelaySecondsLeft--;
           playShortBeep(880, 0.04);
@@ -222,8 +257,8 @@
         }, 1000);
       } else if (state === 'ARMED_HOME') {
         setAlarmStateLocal('arming_home');
-        addSimLog("Arming Home started. Exit delay active (10s).");
-        exitDelaySecondsLeft = 10;
+        addSimLog("Arming Home started. Exit delay active (15s).");
+        exitDelaySecondsLeft = 15;
         simTimerId = setInterval(() => {
           exitDelaySecondsLeft--;
           playShortBeep(880, 0.04);
@@ -242,6 +277,22 @@
     }
   };
 
+  function toggleBypass(index: number) {
+    const isBypassed = alarm_bypassed[index];
+    if (ws && ws.connected) {
+      ws.send({
+        type: 'set_zone_bypass',
+        zone: index,
+        bypass: !isBypassed
+      });
+    } else if (isSimMode) {
+      const newBypassed = [...systemInfo.alarm_bypassed];
+      newBypassed[index] = !newBypassed[index];
+      systemInfo.alarm_bypassed = newBypassed;
+      addSimLog(`Zone ${index + 1} bypass toggled to ${!isBypassed}`, 3, 'SIMULATOR');
+    }
+  }
+
   function handleZoneClickSim(index: number) {
     if (!isSimMode) return;
     
@@ -255,6 +306,11 @@
     // Feedback beep
     playShortBeep(zoneOpen ? 587.33 : 440, 0.05);
     addSimLog(`Zone ${index + 1} (${index === 0 ? 'Front Door' : 'Sensor'}) is ${zoneOpen ? 'OPEN' : 'CLOSED'}.`);
+
+    if (zoneOpen && systemInfo.alarm_bypassed[index]) {
+      addSimLog(`Zone ${index + 1} is bypassed. Ignoring alarm rules.`, 3, 'SIMULATOR');
+      return;
+    }
 
     // Run rules
     const state = systemInfo.alarm_state;
@@ -528,27 +584,44 @@
         </h2>
         
         <div class="space-y-2.5 mt-2">
-          {#each Array.from({ length: 6 }) as _, i}
+          {#each Array.from({ length: 8 }) as _, i}
             <!-- svelte-ignore a11y_click_events_have_key_events -->
             <!-- svelte-ignore a11y_no_static_element_interactions -->
             <div 
               onclick={() => handleZoneClickSim(i)}
-              class="flex items-center justify-between p-3.5 rounded-2xl border transition-all duration-300 select-none {alarm_zones[i] ? 'bg-rose-500/10 border-rose-500/30 shadow-[0_0_15px_rgba(239,68,68,0.05)]' : 'bg-white/[0.02] border-white/5'} {isSimMode ? 'cursor-pointer hover:bg-white/5 active:scale-98' : ''}"
+              class="flex items-center justify-between p-3.5 rounded-2xl border transition-all duration-300 select-none {alarm_disabled[i] ? 'bg-black/10 border-white/5 opacity-50' : (alarm_zones[i] && !alarm_bypassed[i] ? 'bg-rose-500/10 border-rose-500/30 shadow-[0_0_15px_rgba(239,68,68,0.05)]' : alarm_bypassed[i] ? 'bg-yellow-500/5 border-yellow-500/20 opacity-70' : 'bg-white/[0.02] border-white/5')} {isSimMode ? 'cursor-pointer hover:bg-white/5 active:scale-98' : ''}"
             >
               <div class="flex items-center gap-3">
-                <div class="w-9 h-9 rounded-xl flex items-center justify-center font-bold text-xs relative overflow-hidden {alarm_zones[i] ? 'bg-rose-500 text-white animate-pulse' : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/25'}">
-                  {#if !alarm_zones[i]}
+                <div class="w-9 h-9 rounded-xl flex items-center justify-center font-bold text-xs relative overflow-hidden {alarm_disabled[i] ? 'bg-white/5 text-slate-500 border border-white/5' : (alarm_zones[i] && !alarm_bypassed[i] ? 'bg-rose-500 text-white animate-pulse' : alarm_bypassed[i] ? 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/20' : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/25')}">
+                  {#if !alarm_zones[i] && !alarm_bypassed[i] && !alarm_disabled[i]}
                     <div class="absolute inset-0 bg-gradient-to-br from-emerald-500/5 to-transparent"></div>
                   {/if}
                   Z{i + 1}
                 </div>
                 <div>
-                  <span class="text-xs font-bold text-slate-200">Zone {i + 1}</span>
+                  <span class="text-xs font-bold {alarm_disabled[i] ? 'text-slate-500' : 'text-slate-200'}">Zone {i + 1}</span>
                   <span class="text-[9px] text-slate-400 block mt-0.5">{i === 0 ? 'Entry Delay (Front Door)' : 'Instant Sensor'}</span>
                 </div>
               </div>
-              <div class="flex items-center gap-2">
-                {#if alarm_zones[i]}
+              <div class="flex items-center gap-3">
+                {#if alarm_disabled[i]}
+                  <span class="text-[9px] font-bold text-slate-400 uppercase tracking-widest bg-white/5 px-2 py-0.5 rounded-md border border-white/10">Disabled</span>
+                {/if}
+                {#if alarm_bypassed[i]}
+                  <span class="text-[9px] font-bold text-yellow-400 uppercase tracking-widest bg-yellow-500/10 px-2 py-0.5 rounded-md border border-yellow-500/20">Bypassed</span>
+                {/if}
+                <div class="tooltip tooltip-left" data-tip={alarm_bypassed[i] ? "Restore zone" : "Bypass zone"}>
+                  <input
+                    type="checkbox"
+                    checked={alarm_bypassed[i]}
+                    onclick={(e) => { e.stopPropagation(); toggleBypass(i); }}
+                    class="toggle toggle-warning toggle-xs"
+                    disabled={alarm_state !== 'disarmed'}
+                  />
+                </div>
+                {#if alarm_disabled[i]}
+                  <span class="text-[10px] font-bold text-slate-400 uppercase tracking-widest bg-white/5 px-2.5 py-1 rounded-full">Inactive</span>
+                {:else if alarm_zones[i]}
                   <span class="text-[10px] font-bold text-rose-400 uppercase tracking-widest flex items-center gap-1.5 bg-rose-500/15 px-2.5 py-1 rounded-full">
                     <span class="w-1.5 h-1.5 rounded-full bg-rose-500 animate-ping"></span>
                     Open

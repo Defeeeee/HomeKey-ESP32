@@ -428,6 +428,25 @@
 								ethConfig={ethConfig}
 								nfcConnected={nfcConnected}
 								bind:nfcFastPollingEnabled={miscConfig.nfcFastPollingEnabled}
+								bind:dscClockPin={miscConfig.dscClockPin}
+								bind:dscReadPin={miscConfig.dscReadPin}
+								bind:dscWritePin={miscConfig.dscWritePin}
+								bind:zonePin1={miscConfig.zonePin1}
+								bind:zonePin2={miscConfig.zonePin2}
+								bind:zonePin3={miscConfig.zonePin3}
+								bind:zonePin4={miscConfig.zonePin4}
+								bind:zonePin5={miscConfig.zonePin5}
+								bind:zonePin6={miscConfig.zonePin6}
+								bind:zonePin7={miscConfig.zonePin7}
+								bind:zonePin8={miscConfig.zonePin8}
+								bind:zoneDisabled1={miscConfig.zoneDisabled1}
+								bind:zoneDisabled2={miscConfig.zoneDisabled2}
+								bind:zoneDisabled3={miscConfig.zoneDisabled3}
+								bind:zoneDisabled4={miscConfig.zoneDisabled4}
+								bind:zoneDisabled5={miscConfig.zoneDisabled5}
+								bind:zoneDisabled6={miscConfig.zoneDisabled6}
+								bind:zoneDisabled7={miscConfig.zoneDisabled7}
+								bind:zoneDisabled8={miscConfig.zoneDisabled8}
 							/>
 
 							<!-- HomeSpan -->
@@ -521,7 +540,30 @@
 							<!-- Alarm System Section -->
 							<div class="space-y-4 border-t border-base-300 pt-4">
 								<div>
-									<h3 class="text-sm font-semibold">Alarm Zones (Armed Home Mode)</h3>
+									<h3 class="text-sm font-semibold">Alarm System Settings</h3>
+									<p class="text-xs text-base-content/60">Configure the keypad PIN code and zone settings.</p>
+								</div>
+
+								<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+									<div class="form-control">
+										<label class="label">
+											<span class="label-text text-xs">Keypad PIN Code</span>
+										</label>
+										<input
+											type="text"
+											bind:value={miscConfig.alarmCode}
+											placeholder="1234"
+											maxlength="4"
+											pattern="[0-9]{4}"
+											class="input input-sm input-bordered w-full"
+											required
+											inputmode="numeric"
+										/>
+									</div>
+								</div>
+
+								<div class="space-y-2">
+									<h4 class="text-xs font-semibold">Alarm Zones (Armed Home Mode)</h4>
 									<p class="text-xs text-base-content/60">Select which security zones are active and monitored when the system is armed in Home mode.</p>
 								</div>
 

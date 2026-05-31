@@ -13,30 +13,23 @@
 
 enum AlarmMode { DISARMED, ARMING_AWAY, ARMING_HOME, ARMED_AWAY, ARMED_HOME, ENTRY_DELAY, TRIGGERED };
 AlarmMode currentMode = DISARMED;
-#define PIN_ZONE_1 13
-#define PIN_ZONE_2 17
-#define PIN_ZONE_3 14
-#define PIN_ZONE_4 25
-#define PIN_ZONE_5 26
-#define PIN_ZONE_6 27
-#define PIN_ZONE_7 32
-
 struct ZoneConfig {
-    uint8_t id;         // ID de Zona (1-based: 1 a 7)
+    uint8_t id;         // ID de Zona (1-based: 1 a 8)
     int pin;            // Pin GPIO en el ESP32
     int sensorIndex;    // Índice en el array 'sensors' (0-based)
     bool lastPinReading;
     unsigned long lastDebounceTime;
 };
 
-ZoneConfig physicalZones[7] = {
-    {1, PIN_ZONE_1, 0, HIGH, 0},
-    {2, PIN_ZONE_2, 1, HIGH, 0}, // GPIO 17 para Zona 2
-    {3, PIN_ZONE_3, 2, HIGH, 0},
-    {4, PIN_ZONE_4, 3, HIGH, 0},
-    {5, PIN_ZONE_5, 4, HIGH, 0},
-    {6, PIN_ZONE_6, 5, HIGH, 0},
-    {7, PIN_ZONE_7, 6, HIGH, 0}
+ZoneConfig physicalZones[8] = {
+    {1, 13, 0, HIGH, 0},
+    {2, 17, 1, HIGH, 0},
+    {3, 14, 2, HIGH, 0},
+    {4, 25, 3, HIGH, 0},
+    {5, 26, 4, HIGH, 0},
+    {6, 27, 5, HIGH, 0},
+    {7, 32, 6, HIGH, 0},
+    {8, 255, 7, HIGH, 0}
 };
 
 const unsigned long DEBOUNCE_DELAY = 50; // ms
@@ -58,10 +51,9 @@ AlarmMode armedModeBeforeDelay = ARMED_AWAY;
 dscKeypadInterface dsc(21, 18, 19);
 unsigned long lastKeypadBeepTime = 0;
 std::string keypadPinBuffer = "";
-const std::string ALARM_PIN = "1234";
 bool isCommandMode = false;
 bool zoneBypassed[8] = {false, false, false, false, false, false, false, false};
-bool chimeEnabled = true;
+bool chimeEnabled = false;
 bool zoneAlarmMemory[8] = {false, false, false, false, false, false, false, false};
 bool hasAlarmMemory = false;
 bool isBypassMode = false;
@@ -109,6 +101,11 @@ static char decodeDscKey(byte rawCode) {
 void trigger_zone_change(int zoneIdx, bool isOpen, const char* sourceName) {
     if (zoneIdx < 0 || zoneIdx >= 8) return;
     
+    if (user_alarm_is_zone_disabled(zoneIdx)) {
+        sensors[zoneIdx] = false;
+        return;
+    }
+    
     sensors[zoneIdx] = isOpen;
     int zoneId = zoneIdx + 1;
     if (mqttManager) mqttManager->publishSensorState(zoneId, isOpen);
@@ -121,10 +118,12 @@ void trigger_zone_change(int zoneIdx, bool isOpen, const char* sourceName) {
         return;
     }
 
-    // Chime feature when disarmed and zone opens
+    // Chime feature when disarmed and zone opens (disabled)
+    /*
     if (isOpen && currentMode == DISARMED && chimeEnabled) {
         dsc.beep(3);
     }
+    */
 
     bool shouldTrigger = false;
     bool shouldStartEntryDelay = false;
@@ -214,14 +213,46 @@ void print_status() {
 }
 
 extern "C" void user_alarm_setup() { 
-    for (auto& zone : physicalZones) {
-        pinMode(zone.pin, INPUT_PULLUP);
-        zone.lastPinReading = digitalRead(zone.pin);
-        sensors[zone.sensorIndex] = (zone.lastPinReading == HIGH); // HIGH = OPEN
+    auto& miscConfig = configManager->getConfig<espConfig::misc_config_t>();
+    physicalZones[0].pin = miscConfig.zonePin1;
+    physicalZones[1].pin = miscConfig.zonePin2;
+    physicalZones[2].pin = miscConfig.zonePin3;
+    physicalZones[3].pin = miscConfig.zonePin4;
+    physicalZones[4].pin = miscConfig.zonePin5;
+    physicalZones[5].pin = miscConfig.zonePin6;
+    physicalZones[6].pin = miscConfig.zonePin7;
+    physicalZones[7].pin = miscConfig.zonePin8;
+
+    for (int i = 0; i < 8; i++) {
+        auto& zone = physicalZones[i];
+        if (zone.pin != 255 && !user_alarm_is_zone_disabled(i)) {
+            pinMode(zone.pin, INPUT_PULLUP);
+            zone.lastPinReading = digitalRead(zone.pin);
+            sensors[zone.sensorIndex] = (zone.lastPinReading == HIGH); // HIGH = OPEN
+        } else {
+            sensors[zone.sensorIndex] = false;
+        }
     }
     currentMode = DISARMED;
 
     // Start the virtual panel
+    uint8_t clockPin = miscConfig.dscClockPin;
+    uint8_t readPin = miscConfig.dscReadPin;
+    uint8_t writePin = miscConfig.dscWritePin;
+    if (clockPin == 0 || clockPin == 255 || 
+        readPin == 0 || readPin == 255 || 
+        writePin == 0 || writePin == 255 ||
+        clockPin == readPin || clockPin == writePin || readPin == writePin) {
+        Serial.println("⚠️ [ALARM] Invalid keypad pins in config. Falling back to defaults: Clock=21, Read=18, Write=19");
+        clockPin = 21;
+        readPin = 18;
+        writePin = 19;
+    }
+    Serial.printf("⌨️ [ALARM] Keypad active pins: Clock=%d, Read=%d, Write=%d\n", clockPin, readPin, writePin);
+    Serial.printf("⚡ [ALARM] Physical Zone pins: %d, %d, %d, %d, %d, %d, %d, %d\n", 
+                  physicalZones[0].pin, physicalZones[1].pin, physicalZones[2].pin, physicalZones[3].pin,
+                  physicalZones[4].pin, physicalZones[5].pin, physicalZones[6].pin, physicalZones[7].pin);
+    dsc.setPins(clockPin, readPin, writePin);
     dsc.begin();
     dsc.key = 0xFF; // Reset to custom idle state 
     
@@ -255,6 +286,7 @@ extern "C" void user_alarm_setup() {
                 currentMode = ARMING_HOME;
                 armingStartTime = millis();
                 dsc.beep(1); // First immediate arming confirmation beep
+                mqtt_publish_state("arming");
                 Serial.println("\n🏠 [SISTEMA] Iniciando ARMADO HOME...");
             }
         }
@@ -284,6 +316,7 @@ extern "C" void user_alarm_arm_away() {
         lastSecondsLeft = -1;
         
         dsc.beep(1); // First immediate arming confirmation beep
+        mqtt_publish_state("arming");
         
         Serial.println("\n🟠 [SISTEMA] Iniciando ARMADO AWAY...");
     }
@@ -300,7 +333,9 @@ extern "C" void user_alarm_disarm() {
         dsc.beep(2);
  
         // Clear bypasses on disarm
-        memset(zoneBypassed, 0, sizeof(zoneBypassed));
+        for (int i = 0; i < 8; i++) {
+            user_alarm_set_zone_bypass(i, false);
+        }
         // Reset sub-modes to ensure we aren't stuck in menus
         isBypassMode = false;
         isMemoryMode = false;
@@ -352,8 +387,7 @@ extern "C" void user_alarm_loop() {
             if (isBypassMode) {
                 if (key >= '1' && key <= '8') {
                     int idx = key - '1';
-                    zoneBypassed[idx] = !zoneBypassed[idx];
-                    Serial.printf("⌨️ [TECLADO DSC] Zona %d %s\n", idx + 1, zoneBypassed[idx] ? "ANULADA (BYPASSED)" : "ACTIVA");
+                    user_alarm_set_zone_bypass(idx, !zoneBypassed[idx]);
                 } else if (key == '#' || key == '*') {
                     isBypassMode = false;
                     Serial.println("⌨️ [TECLADO DSC] Saliendo de modo anulación.");
@@ -431,7 +465,7 @@ extern "C" void user_alarm_loop() {
                     Serial.printf("⌨️ [TECLADO DSC] PIN Buffer: %s\n", keypadPinBuffer.c_str());
                     
                     if (keypadPinBuffer.length() == 4) {
-                        if (keypadPinBuffer == ALARM_PIN) {
+                        if (keypadPinBuffer == configManager->getConfig<espConfig::misc_config_t>().alarmCode) {
                             Serial.println("🔑 [TECLADO DSC] PIN correcto ingresado.");
                             if (currentMode == DISARMED) {
                                 user_alarm_arm_away();
@@ -470,6 +504,7 @@ extern "C" void user_alarm_loop() {
     if (millis() - lastSamplingTime >= SAMPLING_INTERVAL) {
         lastSamplingTime = millis();
         for (auto& zone : physicalZones) {
+            if (zone.pin == 255 || user_alarm_is_zone_disabled(zone.sensorIndex)) continue;
             int reading = digitalRead(zone.pin);
             if (reading != zone.lastPinReading) {
                 zone.lastDebounceTime = millis();
@@ -670,5 +705,43 @@ extern "C" void user_alarm_failed_tap() {
     Serial.println("NFC Fail"); 
     // Play warning tone pattern on keypad to indicate failed tap
     dsc.beep(4); 
+}
+
+extern "C" bool user_alarm_is_zone_bypassed(int zoneIdx) {
+    if (zoneIdx >= 0 && zoneIdx < 8) {
+        return zoneBypassed[zoneIdx];
+    }
+    return false;
+}
+
+extern "C" void user_alarm_set_zone_bypass(int zoneIdx, bool bypassed) {
+    if (zoneIdx >= 0 && zoneIdx < 8) {
+        zoneBypassed[zoneIdx] = bypassed;
+        Serial.printf("ℹ️ [SISTEMA] Zone %d bypass changed to %s\n", zoneIdx + 1, bypassed ? "BYPASSED" : "ACTIVE");
+        
+        // Publish state to MQTT
+        if (mqttManager) {
+            std::string stateTopic = "home/alarm/zone/" + std::to_string(zoneIdx + 1) + "/bypass/state";
+            mqttManager->publish(stateTopic, bypassed ? "ON" : "OFF", 0, true);
+        }
+        
+        broadcast_ui_update();
+    }
+}
+
+extern "C" bool user_alarm_is_zone_disabled(int zoneIdx) {
+    if (zoneIdx < 0 || zoneIdx >= 8) return false;
+    auto& miscConfig = configManager->getConfig<espConfig::misc_config_t>();
+    switch (zoneIdx) {
+        case 0: return miscConfig.zoneDisabled1;
+        case 1: return miscConfig.zoneDisabled2;
+        case 2: return miscConfig.zoneDisabled3;
+        case 3: return miscConfig.zoneDisabled4;
+        case 4: return miscConfig.zoneDisabled5;
+        case 5: return miscConfig.zoneDisabled6;
+        case 6: return miscConfig.zoneDisabled7;
+        case 7: return miscConfig.zoneDisabled8;
+        default: return false;
+    }
 }
 
