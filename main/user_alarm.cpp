@@ -147,7 +147,7 @@ void trigger_zone_change(int zoneIdx, bool isOpen, const char* sourceName) {
                 }
             }
         } else if (currentMode == ENTRY_DELAY) {
-            if (zoneId != 1) {
+            if (zoneId != 1 && zoneId != 2) { // Ignore Zone 2 (motion sensor) during entry delay
                 if (armedModeBeforeDelay == ARMED_AWAY) {
                     shouldTrigger = true;
                 } else if (armedModeBeforeDelay == ARMED_HOME) {
