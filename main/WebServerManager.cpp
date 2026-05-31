@@ -8,6 +8,7 @@
 #include "app_event_loop.hpp"
 #include "fmt/ranges.h"
 #include "WebServerManager.hpp"
+#include "include/user_alarm.h"
 #include "ConfigManager.hpp"
 #include "HomeSpan.h"
 #include "MqttManager.hpp"
@@ -208,6 +209,10 @@ void WebServerManager::begin() {
   }
 
   ESP_LOGI(TAG, "Web server initialization complete");
+
+  m_alarm_event = AppEventLoop::subscribe(ALARM_EVENT, ALARM_STATE_CHANGED, [this](const uint8_t* data, size_t size){
+    this->broadcastDeviceMetrics();
+  });
 
   m_isInitialized = true;
 }
@@ -1977,6 +1982,23 @@ esp_err_t WebServerManager::handleWebSocketMessage(httpd_req_t *req,
     response = getDeviceInfo();
   } else if (msg_type == "ota_info") {
     response = getOTAInfo();
+  } else if (msg_type == "set_alarm_state") {
+    cJSON *state_item = cJSON_GetObjectItem(json, "data");
+    if(state_item && cJSON_IsString(state_item)) {
+      std::string cmd = state_item->valuestring;
+      AppEventLoop::publish(ALARM_EVENT, ALARM_SET_REMOTE, (const uint8_t*)cmd.c_str(), cmd.length());
+      ESP_LOGI("WS_ALARM", "Alarm command received via WS: %s", cmd.c_str());
+    }
+    response = getDeviceMetrics();
+  } else if (msg_type == "set_zone_bypass") {
+    cJSON *zone_item = cJSON_GetObjectItem(json, "zone");
+    cJSON *bypass_item = cJSON_GetObjectItem(json, "bypass");
+    if (zone_item && cJSON_IsNumber(zone_item) && bypass_item && cJSON_IsBool(bypass_item)) {
+      int zoneIdx = zone_item->valueint; // 0-7
+      bool bypass = cJSON_IsTrue(bypass_item);
+      user_alarm_set_zone_bypass(zoneIdx, bypass);
+    }
+    response = getDeviceMetrics();
   } else if (msg_type == "set_log_level") {  
     cJSON *level_item = cJSON_GetObjectItem(json, "data");
     if(level_item && cJSON_IsNumber(level_item)) {
@@ -2018,7 +2040,32 @@ std::string WebServerManager::getDeviceMetrics() {
   if (m_mqttManager && !m_mqttManager->getLastErrorMessage().empty()) {
     cJSON_AddStringToObject(status, "mqtt_error_message", m_mqttManager->getLastErrorMessage().c_str());
   }
+  
+  cJSON_AddStringToObject(status, "alarm_state", user_alarm_get_state_string());
+  cJSON *zones = cJSON_CreateArray();
+  for (int i = 1; i <= 8; i++) {
+    cJSON_AddItemToArray(zones, cJSON_CreateBool(user_alarm_get_sensor_state(i)));
+  }
+  cJSON_AddItemToObject(status, "alarm_zones", zones);
+
+  cJSON *bypassed = cJSON_CreateArray();
+  for (int i = 1; i <= 8; i++) {
+    cJSON_AddItemToArray(bypassed, cJSON_CreateBool(user_alarm_is_zone_bypassed(i - 1)));
+  }
+  cJSON_AddItemToObject(status, "alarm_bypassed", bypassed);
+
+  cJSON *disabled = cJSON_CreateArray();
+  for (int i = 0; i < 8; i++) {
+    cJSON_AddItemToArray(disabled, cJSON_CreateBool(user_alarm_is_zone_disabled(i)));
+  }
+  cJSON_AddItemToObject(status, "alarm_disabled", disabled);
+  
   return cjson_to_string_and_free(status);
+}
+
+void WebServerManager::broadcastDeviceMetrics() {
+  std::string metrics = getDeviceMetrics();
+  broadcastWs((const uint8_t *)metrics.c_str(), metrics.size(), HTTPD_WS_TYPE_TEXT);
 }
 
 std::string WebServerManager::getDeviceInfo() {

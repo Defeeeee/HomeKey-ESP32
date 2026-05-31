@@ -17,6 +17,33 @@
 	let unsubscribeMessages : (() => void) | null = null;
 
   const isCaptivePortal = $derived(route.pathname.startsWith('/captive-portal'));
+	let alarmState = $derived(systemInfo?.alarm_state || 'disarmed');
+
+	function getGlowColor1(state: string) {
+		switch (state) {
+			case 'disarmed': return 'bg-[#10b981]';
+			case 'pending':
+			case 'arming_away':
+			case 'arming_home':
+			case 'armed_home': return 'bg-[#f59e0b]';
+			case 'armed_away':
+			case 'triggered': return 'bg-[#ef4444]';
+			default: return 'bg-primary';
+		}
+	}
+
+	function getGlowColor2(state: string) {
+		switch (state) {
+			case 'disarmed': return 'bg-[#8b5cf6]';
+			case 'pending':
+			case 'arming_away':
+			case 'arming_home':
+			case 'armed_home': return 'bg-[#ec4899]';
+			case 'armed_away':
+			case 'triggered': return 'bg-[#be123c]';
+			default: return 'bg-secondary';
+		}
+	}
 
 	onMount(() => {
     initTheme();
@@ -69,9 +96,15 @@
   {@render children()}
 {:else}
   <!-- Normal App Layout -->
-  <div class="flex flex-col h-dvh">
+  <div class="flex flex-col h-dvh bg-[#07060f] relative overflow-hidden text-slate-100">
+    <!-- Ambient Background Glows -->
+    <div class="absolute inset-0 overflow-hidden pointer-events-none z-0">
+      <div class="absolute top-[-10%] left-[-10%] w-[40rem] h-[40rem] rounded-full blur-[130px] opacity-20 transition-all duration-1000 ease-in-out {getGlowColor1(alarmState)}"></div>
+      <div class="absolute bottom-[-15%] right-[-10%] w-[45rem] h-[45rem] rounded-full blur-[150px] opacity-15 transition-all duration-1000 ease-in-out {getGlowColor2(alarmState)}"></div>
+    </div>
+
     <!-- Mobile Navbar -->
-    <div class="navbar bg-base-100 lg:hidden sticky top-0 z-9999">
+    <div class="navbar bg-[#0e0e15]/75 border-b border-white/5 backdrop-blur-md lg:hidden sticky top-0 z-9999 relative z-10">
       <div class="navbar-start w-full">
         <label for="main-content-drawer" class="btn btn-ghost drawer-button lg:hidden" aria-label="Menu">
           <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24"
@@ -82,12 +115,12 @@
         <div class="flex justify-between w-full">
           <span class="font-bold text-lg">
             {#if !systemInfo.deviceName}
-              <div class="skeleton h-8 w-32"></div>
+              <div class="skeleton h-8 w-32 bg-white/5"></div>
             {:else}
               {systemInfo.deviceName}
             {/if}
           </span>
-          <div class="gap-1 pr-2">
+          <div class="gap-1 pr-2 flex items-center">
             <div class="inline-grid *:[grid-area:1/1]">
               <div class="status animate-ping" class:status-success={websocketState.connected} class:status-error={!websocketState.connected} class:status-warning={websocketState.state == "reconnecting"}></div>
               <div class="status" class:status-success={websocketState.connected} class:status-error={!websocketState.connected} class:status-warning={websocketState.state == "reconnecting"}></div>
@@ -99,7 +132,7 @@
     </div>
 
     <!-- Drawer -->
-    <div class="drawer lg:drawer-open flex w-full flex-1 overflow-hidden">
+    <div class="drawer lg:drawer-open flex w-full flex-1 overflow-hidden relative z-10">
       <input id="main-content-drawer" type="checkbox" class="drawer-toggle" bind:checked={drawerOpen} />
       <!-- Sidebar -->
       <div class="drawer-side max-lg:fixed max-lg:top-16 max-lg:bottom-0 max-lg:left-0 max-lg:z-50 max-lg:h-[calc(100dvh-4rem)] h-screen flex flex-col overflow-hidden">
@@ -108,10 +141,10 @@
       </div>
       <div class="drawer-content h-full w-full">
         <!-- Content -->
-        <main id="main-content" class="px-6 h-full overflow-y-auto bg-base-100">
+        <main id="main-content" class="px-6 h-full overflow-y-auto bg-transparent">
         {#if getLoadingState()}
           <div class="flex items-center justify-center h-full">
-            <div class="loading loading-spinner loading-lg"></div>
+            <div class="loading loading-spinner loading-lg text-primary"></div>
           </div>
         {:else}
           {@render children()}

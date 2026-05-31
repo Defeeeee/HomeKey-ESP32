@@ -70,6 +70,7 @@ public:
   void setMqttManager(MqttManager *mqttManager) { m_mqttManager = mqttManager; }
   void setNfcManager(NfcManager *nfcManager) { m_nfcManager = nfcManager; }
   void broadcastWs(const uint8_t *payload, size_t len, httpd_ws_type_t type);
+  void broadcastDeviceMetrics();
 
 private:
   // ------------------------------------------------------------------------
@@ -191,6 +192,7 @@ private:
   std::mutex m_wsClientsMutex;
   esp_timer_handle_t m_statusTimer;
   std::deque<std::vector<uint8_t>> m_wsBroadcastBuffer;
+  AppEventLoop::SubscriptionHandle m_alarm_event;
 
 
   std::atomic<bool> m_otaInProgress{false};

@@ -1,34 +1,212 @@
 #include "include/user_alarm.h"
 #include <Arduino.h>
+#include <WiFi.h>
+#include "include/NfcManager.hpp"
 #include <string>
 #include <vector>
 #include "include/app_event_loop.hpp"
 #include "include/app_events.hpp"
 #include "include/ConfigManager.hpp"
+#include "include/MqttManager.hpp"
+#include "include/WebServerManager.hpp"
+#include <dscKeybusInterface.h>
 
-enum AlarmMode { DISARMED, ARMING_AWAY, ARMING_HOME, ARMED_AWAY, ARMED_HOME, TRIGGERED };
+enum AlarmMode { DISARMED, ARMING_AWAY, ARMING_HOME, ARMED_AWAY, ARMED_HOME, ENTRY_DELAY, TRIGGERED };
 AlarmMode currentMode = DISARMED;
+struct ZoneConfig {
+    uint8_t id;         // ID de Zona (1-based: 1 a 8)
+    int pin;            // Pin GPIO en el ESP32
+    int sensorIndex;    // Índice en el array 'sensors' (0-based)
+    bool lastPinReading;
+    unsigned long lastDebounceTime;
+};
+
+ZoneConfig physicalZones[8] = {
+    {1, 13, 0, HIGH, 0},
+    {2, 17, 1, HIGH, 0},
+    {3, 14, 2, HIGH, 0},
+    {4, 25, 3, HIGH, 0},
+    {5, 26, 4, HIGH, 0},
+    {6, 27, 5, HIGH, 0},
+    {7, 32, 6, HIGH, 0},
+    {8, 255, 7, HIGH, 0}
+};
+
+const unsigned long DEBOUNCE_DELAY = 50; // ms
+unsigned long lastSamplingTime = 0;
+const unsigned long SAMPLING_INTERVAL = 200; // Muestreo cada 200ms
 bool sensors[8] = {false, false, false, false, false, false, false, false};
 AppEventLoop::SubscriptionHandle m_remote_event;
 
 unsigned long armingStartTime = 0;
-const unsigned long EXIT_DELAY_MS = 10000; // 10 segundos de cuenta atrás
+const unsigned long EXIT_DELAY_MS = 15000; // 15 segundos de cuenta atrás (DSC-aligned)
 int lastSecondsLeft = -1;
 
+unsigned long entryDelayStartTime = 0;
+const unsigned long ENTRY_DELAY_MS = 15000; // 15 segundos de retardo de entrada
+int lastEntrySecondsLeft = -1;
+AlarmMode armedModeBeforeDelay = ARMED_AWAY;
+
+// DSC Keybus Interface Global Instance (Clock: 21, Read: 18, Write: 19)
+dscKeypadInterface dsc(21, 18, 19);
+unsigned long lastKeypadBeepTime = 0;
+std::string keypadPinBuffer = "";
+bool isCommandMode = false;
+bool zoneBypassed[8] = {false, false, false, false, false, false, false, false};
+bool chimeEnabled = false;
+bool zoneAlarmMemory[8] = {false, false, false, false, false, false, false, false};
+bool hasAlarmMemory = false;
+bool isBypassMode = false;
+bool isMemoryMode = false;
+bool isTroubleMode = false;
+bool isSimulateMode = false;
+
 extern std::unique_ptr<ConfigManager> configManager;
+extern std::unique_ptr<MqttManager> mqttManager;
+extern std::unique_ptr<WebServerManager> webServerManager;
+extern std::unique_ptr<NfcManager> nfcManager;
+
+void print_status();
+void broadcast_ui_update() {
+    if (webServerManager) {
+        webServerManager->broadcastDeviceMetrics();
+    }
+}
 
 void mqtt_publish_state(const char* state) {
     AppEventLoop::publish(ALARM_EVENT, ALARM_STATE_CHANGED, (const uint8_t*)state, strlen(state));
+    broadcast_ui_update();
+}
+
+// Maps raw DSC Keybus codes to standard characters
+static char decodeDscKey(byte rawCode) {
+    switch(rawCode) {
+        case 5:  return '1';
+        case 10: return '2';
+        case 15: return '3';
+        case 17: return '4';
+        case 22: return '5';
+        case 27: return '6';
+        case 28: return '7';
+        case 34: return '8';
+        case 39: return '9';
+        case 40: return '*';
+        case 45: return '#';
+        case 0:  return '0'; 
+        case 0xAF: return 's'; // Stay key
+        case 0xB1: return 'a'; // Away key
+        default: return '?'; 
+    }
+}
+
+// Global helper to process zone transitions and state rules
+void trigger_zone_change(int zoneIdx, bool isOpen, const char* sourceName) {
+    if (zoneIdx < 0 || zoneIdx >= 8) return;
+    
+    if (user_alarm_is_zone_disabled(zoneIdx)) {
+        sensors[zoneIdx] = false;
+        return;
+    }
+    
+    sensors[zoneIdx] = isOpen;
+    int zoneId = zoneIdx + 1;
+    if (mqttManager) mqttManager->publishSensorState(zoneId, isOpen);
+    Serial.printf("⚡ [%s] Cambio en Zona %d: %s\n", sourceName, zoneId, isOpen ? "OPEN" : "CLOSED");
+    broadcast_ui_update();
+
+    // If the zone is bypassed, do NOT trigger any alarm/chime logic!
+    if (zoneBypassed[zoneIdx]) {
+        Serial.printf("ℹ️ [SISTEMA] Zona %d está anulada (bypassed). Ignorando lógica de alarma.\n", zoneId);
+        return;
+    }
+
+    // Chime feature when disarmed and zone opens (disabled)
+    /*
+    if (isOpen && currentMode == DISARMED && chimeEnabled) {
+        dsc.beep(3);
+    }
+    */
+
+    bool shouldTrigger = false;
+    bool shouldStartEntryDelay = false;
+    
+    if (isOpen) {
+        if (currentMode == ARMED_AWAY) {
+            if (zoneId == 1) {
+                shouldStartEntryDelay = true;
+            } else {
+                shouldTrigger = true;
+            }
+        } else if (currentMode == ARMED_HOME) {
+            uint8_t mask = configManager->getConfig<espConfig::misc_config_t>().armedHomeZones;
+            if ((mask >> zoneIdx) & 0x01) {
+                if (zoneId == 1) {
+                    shouldStartEntryDelay = true;
+                } else {
+                    shouldTrigger = true;
+                }
+            }
+        } else if (currentMode == ENTRY_DELAY) {
+            if (zoneId != 1) {
+                if (armedModeBeforeDelay == ARMED_AWAY) {
+                    shouldTrigger = true;
+                } else if (armedModeBeforeDelay == ARMED_HOME) {
+                    uint8_t mask = configManager->getConfig<espConfig::misc_config_t>().armedHomeZones;
+                    if ((mask >> zoneIdx) & 0x01) {
+                        shouldTrigger = true;
+                    }
+                }
+            }
+        }
+    }
+
+    if (shouldStartEntryDelay) {
+        armedModeBeforeDelay = currentMode;
+        currentMode = ENTRY_DELAY;
+        entryDelayStartTime = millis();
+        lastEntrySecondsLeft = -1;
+        mqtt_publish_state("pending");
+        Serial.printf("\n⏳ [SISTEMA] Puerta principal abierta (%s). INICIANDO RETARDO DE ENTRADA (15s)...\n", sourceName);
+    }
+    if (shouldTrigger) {
+        currentMode = TRIGGERED;
+        zoneAlarmMemory[zoneIdx] = true;
+        hasAlarmMemory = true;
+        mqtt_publish_state("triggered");
+        Serial.printf("\n🔴🔴🔴 [ALERTA] INTRUSION DETECTADA EN ZONA %d (%s) 🔴🔴🔴\n", zoneId, sourceName);
+        dsc.buzzer(255); // Sound physical buzzer continuously for up to 255s
+    }
+    
+    print_status();
+}
+
+extern "C" const char* user_alarm_get_state_string() {
+    if(currentMode == DISARMED) return "disarmed";
+    if(currentMode == ARMING_AWAY) return "arming_away";
+    if(currentMode == ARMING_HOME) return "arming_home";
+    if(currentMode == ARMED_AWAY) return "armed_away";
+    if(currentMode == ARMED_HOME) return "armed_home";
+    if(currentMode == ENTRY_DELAY) return "pending";
+    if(currentMode == TRIGGERED) return "triggered";
+    return "disarmed";
+}
+
+extern "C" bool user_alarm_get_sensor_state(int id) {
+    if (id >= 1 && id <= 8) {
+        return sensors[id - 1];
+    }
+    return false;
 }
 
 void print_status() {
     Serial.printf("\n==================================================\n");
     Serial.print("MODO ALARMA: ");
     if(currentMode == DISARMED) Serial.println("⚪ DESARMADO");
-    else if(currentMode == ARMING_AWAY) Serial.println("⏳ PENDIENTE (AWAY)");
-    else if(currentMode == ARMING_HOME) Serial.println("⏳ PENDIENTE (HOME)");
+    else if(currentMode == ARMING_AWAY) Serial.println("⏳ PENDIENTE DE SALIDA (AWAY)");
+    else if(currentMode == ARMING_HOME) Serial.println("⏳ PENDIENTE DE SALIDA (HOME)");
     else if(currentMode == ARMED_AWAY) Serial.println("🟠 ARMADO (AWAY)");
     else if(currentMode == ARMED_HOME) Serial.println("🏠 ARMADO (HOME)");
+    else if(currentMode == ENTRY_DELAY) Serial.println("⏳ RETARDO DE ENTRADA (PENDING)");
     else Serial.println("🔴 !!! DISPARADO !!!");
     
     Serial.print("SENSORES: [");
@@ -38,28 +216,117 @@ void print_status() {
 }
 
 extern "C" void user_alarm_setup() { 
+    auto& miscConfig = configManager->getConfig<espConfig::misc_config_t>();
+    physicalZones[0].pin = miscConfig.zonePin1;
+    physicalZones[1].pin = miscConfig.zonePin2;
+    physicalZones[2].pin = miscConfig.zonePin3;
+    physicalZones[3].pin = miscConfig.zonePin4;
+    physicalZones[4].pin = miscConfig.zonePin5;
+    physicalZones[5].pin = miscConfig.zonePin6;
+    physicalZones[6].pin = miscConfig.zonePin7;
+    physicalZones[7].pin = miscConfig.zonePin8;
+
+    for (int i = 0; i < 8; i++) {
+        auto& zone = physicalZones[i];
+        if (zone.pin != 255 && !user_alarm_is_zone_disabled(i)) {
+            pinMode(zone.pin, INPUT_PULLUP);
+            zone.lastPinReading = digitalRead(zone.pin);
+            sensors[zone.sensorIndex] = (zone.lastPinReading == HIGH); // HIGH = OPEN
+        } else {
+            sensors[zone.sensorIndex] = false;
+        }
+    }
     currentMode = DISARMED;
+
+    // Start the virtual panel
+    uint8_t clockPin = miscConfig.dscClockPin;
+    uint8_t readPin = miscConfig.dscReadPin;
+    uint8_t writePin = miscConfig.dscWritePin;
+    if (clockPin == 0 || clockPin == 255 || 
+        readPin == 0 || readPin == 255 || 
+        writePin == 0 || writePin == 255 ||
+        clockPin == readPin || clockPin == writePin || readPin == writePin) {
+        Serial.println("⚠️ [ALARM] Invalid keypad pins in config. Falling back to defaults: Clock=21, Read=18, Write=19");
+        clockPin = 21;
+        readPin = 18;
+        writePin = 19;
+    }
+    Serial.printf("⌨️ [ALARM] Keypad active pins: Clock=%d, Read=%d, Write=%d\n", clockPin, readPin, writePin);
+    Serial.printf("⚡ [ALARM] Physical Zone pins: %d, %d, %d, %d, %d, %d, %d, %d\n", 
+                  physicalZones[0].pin, physicalZones[1].pin, physicalZones[2].pin, physicalZones[3].pin,
+                  physicalZones[4].pin, physicalZones[5].pin, physicalZones[6].pin, physicalZones[7].pin);
+    dsc.setPins(clockPin, readPin, writePin);
+    dsc.begin();
+    dsc.key = 0xFF; // Reset to custom idle state 
+    
+    // Set initial "Clean" board state
+    dsc.lightReady = on;
+    dsc.lightArmed = off;
+    dsc.lightTrouble = off;
+    dsc.lightBacklight = on;
+
     mqtt_publish_state("disarmed");
     m_remote_event = AppEventLoop::subscribe(ALARM_EVENT, ALARM_SET_REMOTE, [](const uint8_t* data, size_t size){
         if(size == 0) return;
         std::string cmd(reinterpret_cast<const char*>(data), size);
         if (cmd == "ARMED_AWAY") user_alarm_arm_away();
-        else if (cmd == "ARMED_HOME") {
-            if (currentMode != ARMED_HOME && currentMode != ARMING_HOME) {
-                currentMode = ARMING_HOME;
-                armingStartTime = millis();
-                Serial.println("\n🏠 [SISTEMA] Iniciando ARMADO HOME...");
-            }
-        }
+        else if (cmd == "ARMED_HOME") user_alarm_arm_home();
         else if (cmd == "DISARMED") user_alarm_disarm();
     });
 }
 
+extern "C" void user_alarm_arm_home() {
+    if (currentMode != ARMED_HOME && currentMode != ARMING_HOME) {
+        // Ready Check (checking all 8 zones, skipping bypassed ones)
+        bool anyZoneOpen = false;
+        for (int i = 0; i < 8; i++) {
+            if (sensors[i] && !zoneBypassed[i]) anyZoneOpen = true;
+        }
+        if (anyZoneOpen) {
+            Serial.println("\n⚠️ [SISTEMA] No se puede armar Home: Zonas abiertas.");
+            dsc.beep(4); // Play error chirp
+            return;
+        }
+
+        // Clear alarm memory on arming
+        memset(zoneAlarmMemory, 0, sizeof(zoneAlarmMemory));
+        hasAlarmMemory = false;
+
+        currentMode = ARMING_HOME;
+        armingStartTime = millis();
+        lastSecondsLeft = -1;
+        
+        dsc.beep(1); // First immediate arming confirmation beep
+        mqtt_publish_state("arming");
+        
+        Serial.println("\n🏠 [SISTEMA] Iniciando ARMADO HOME...");
+    }
+}
+
 extern "C" void user_alarm_arm_away() {
     if (currentMode != ARMED_AWAY && currentMode != ARMING_AWAY) {
+        // Ready Check (checking all 8 zones, skipping bypassed ones)
+        bool anyZoneOpen = false;
+        for (int i = 0; i < 8; i++) {
+            if (sensors[i] && !zoneBypassed[i]) anyZoneOpen = true;
+        }
+        if (anyZoneOpen) {
+            Serial.println("\n⚠️ [SISTEMA] No se puede armar Away: Zonas abiertas.");
+            dsc.beep(4); // Play error chirp
+            return;
+        }
+
+        // Clear alarm memory on arming
+        memset(zoneAlarmMemory, 0, sizeof(zoneAlarmMemory));
+        hasAlarmMemory = false;
+
         currentMode = ARMING_AWAY;
         armingStartTime = millis();
         lastSecondsLeft = -1;
+        
+        dsc.beep(1); // First immediate arming confirmation beep
+        mqtt_publish_state("arming");
+        
         Serial.println("\n🟠 [SISTEMA] Iniciando ARMADO AWAY...");
     }
 }
@@ -67,14 +334,230 @@ extern "C" void user_alarm_arm_away() {
 extern "C" void user_alarm_disarm() { 
     if (currentMode != DISARMED) {
         currentMode = DISARMED;
+ 
+        // Clear active beeps and buzzer
+        dsc.beep(0);
+        dsc.buzzer(0);
+        // Play double confirmation beep
+        dsc.beep(2);
+ 
+        // Clear bypasses on disarm
+        for (int i = 0; i < 8; i++) {
+            user_alarm_set_zone_bypass(i, false);
+        }
+        // Reset sub-modes to ensure we aren't stuck in menus
+        isBypassMode = false;
+        isMemoryMode = false;
+        isTroubleMode = false;
+        isSimulateMode = false;
+
         mqtt_publish_state("disarmed");
         Serial.println("\n🟢 [SISTEMA] ALARMA DESARMADA");
         print_status();
     }
 }
+ 
+extern "C" void user_alarm_loop() {
+    // 1. Maintain Keybus clock (MUST RUN CONSTANTLY)
+    dsc.loop();
 
-extern "C" void user_alarm_loop() { 
-    // Manejar cuenta atrás de armado
+    // 2. Handle Keypad input
+    if (dsc.key != 0xFF) {
+        byte rawKey = dsc.key;
+        dsc.key = 0xFF; // Clear buffer
+        char key = decodeDscKey(rawKey);
+        
+        if (key != '?') {
+            // Anti-ghosting filter for unpowered keypad:
+            // Unpowered keypad reads stuck low read pin, causing continuous rapid '0' keypresses.
+            static unsigned long lastKeyTime = 0;
+            static char lastKey = '\0';
+            static int rapidZeroCount = 0;
+            unsigned long now = millis();
+
+            // Clear PIN buffer on idle timeout (5 seconds of keypad inactivity)
+            if (keypadPinBuffer.length() > 0 && (now - lastKeyTime > 5000)) {
+                keypadPinBuffer = "";
+                Serial.println("⌨️ [TECLADO DSC] PIN buffer borrado por inactividad.");
+            }
+            
+            if (key == '0') {
+                if (lastKey == '0' && (now - lastKeyTime < 350)) {
+                    rapidZeroCount++;
+                    lastKeyTime = now;
+                    if (rapidZeroCount >= 3) {
+                        keypadPinBuffer = ""; // Clear any partial PIN accumulated from ghosting
+                    }
+                    return; // Ignore ghost keypress
+                } else {
+                    rapidZeroCount = 0;
+                }
+            }
+            lastKeyTime = now;
+            lastKey = key;
+
+            Serial.printf("⌨️ [TECLADO DSC] Tecla presionada: [ %c ]\n", key);
+            // (Keypad hardware automatically generates keypress audio feedback)
+
+            if (isBypassMode) {
+                if (key >= '1' && key <= '8') {
+                    int idx = key - '1';
+                    user_alarm_set_zone_bypass(idx, !zoneBypassed[idx]);
+                } else if (key == '#' || key == '*') {
+                    isBypassMode = false;
+                    Serial.println("⌨️ [TECLADO DSC] Saliendo de modo anulación.");
+                } else {
+                    dsc.beep(4);
+                }
+            }
+            else if (isMemoryMode) {
+                if (key == '#' || key == '*') {
+                    isMemoryMode = false;
+                    Serial.println("⌨️ [TECLADO DSC] Saliendo de modo memoria.");
+                } else {
+                    dsc.beep(4);
+                }
+            }
+            else if (isTroubleMode) {
+                if (key == '#' || key == '*') {
+                    isTroubleMode = false;
+                    Serial.println("⌨️ [TECLADO DSC] Saliendo de modo fallo.");
+                } else {
+                    dsc.beep(4);
+                }
+            }
+            else if (isSimulateMode) {
+                if (key >= '1' && key <= '8') {
+                    int idx = key - '1';
+                    trigger_zone_change(idx, !sensors[idx], "TECLADO DSC (SIM)");
+                } else if (key == '#' || key == '*') {
+                    isSimulateMode = false;
+                    Serial.println("⌨️ [TECLADO DSC] Saliendo de modo simulación.");
+                } else {
+                    dsc.beep(4);
+                }
+            }
+            else if (isCommandMode) {
+                if (key == '1') {
+                    isBypassMode = true;
+                    Serial.println("⌨️ [TECLADO DSC] Modo Anulación Activo (*1). Presione 1-8 para anular/activar, # para salir.");
+                } else if (key == '2') {
+                    isTroubleMode = true;
+                    Serial.println("⌨️ [TECLADO DSC] Modo Fallos Activo (*2). Presione # para salir.");
+                } else if (key == '3') {
+                    isMemoryMode = true;
+                    Serial.println("⌨️ [TECLADO DSC] Modo Memoria Activo (*3). Presione # para salir.");
+                } else if (key == '4') {
+                    chimeEnabled = !chimeEnabled;
+                    Serial.printf("⌨️ [TECLADO DSC] Chime (Campanilla) %s\n", chimeEnabled ? "ACTIVADO" : "DESACTIVADO");
+                    if (chimeEnabled) {
+                        dsc.beep(3); // 3 rapid chirps
+                    } else {
+                        dsc.beep(1); // 1 beep (since keypress already beeped, this gives total 2 or a second beep)
+                    }
+                } else if (key == '7') {
+                    isSimulateMode = true;
+                    Serial.println("⌨️ [TECLADO DSC] Modo Simulación Activo (*7). Presione 1-8 para alternar sensor, # para salir.");
+                } else if (key == '0') {
+                    Serial.println("⌨️ [TECLADO DSC] Armado rápido (*0)...");
+                    if (currentMode == DISARMED) {
+                        user_alarm_arm_away();
+                    } else {
+                        dsc.beep(4);
+                    }
+                } else if (key == '9') {
+                    Serial.println("⌨️ [TECLADO DSC] Armado rápido en Modo Home (*9)...");
+                    if (currentMode == DISARMED) {
+                        user_alarm_arm_home();
+                    } else {
+                        dsc.beep(4);
+                    }
+                } else if (key == '#' || key == '*') {
+                    Serial.println("⌨️ [TECLADO DSC] Cancelado.");
+                } else {
+                    Serial.println("⚠️ [TECLADO DSC] Código de comando desconocido.");
+                    dsc.beep(4);
+                }
+                isCommandMode = false;
+            } 
+            else {
+                // Normal Mode (PIN Code entry & Quick Arming)
+                if (key >= '0' && key <= '9') {
+                    keypadPinBuffer += key;
+                    Serial.printf("⌨️ [TECLADO DSC] PIN Buffer: %s\n", keypadPinBuffer.c_str());
+                    
+                    if (keypadPinBuffer.length() == 4) {
+                        if (keypadPinBuffer == configManager->getConfig<espConfig::misc_config_t>().alarmCode) {
+                            Serial.println("🔑 [TECLADO DSC] PIN correcto ingresado.");
+                            if (currentMode == DISARMED) {
+                                user_alarm_arm_away();
+                            } else {
+                                user_alarm_disarm();
+                            }
+                        } else {
+                            Serial.println("❌ [TECLADO DSC] PIN incorrecto!");
+                            dsc.beep(4); // Play error chirp
+                        }
+                        keypadPinBuffer = ""; // Reset buffer
+                    }
+                }
+                else if (key == 's') {
+                    Serial.println("⌨️ [TECLADO DSC] Tecla Stay presionada. Armado Home...");
+                    if (currentMode == DISARMED) {
+                        user_alarm_arm_home();
+                    } else {
+                        dsc.beep(4);
+                    }
+                }
+                else if (key == 'a') {
+                    Serial.println("⌨️ [TECLADO DSC] Tecla Away presionada. Armado Away...");
+                    if (currentMode == DISARMED) {
+                        user_alarm_arm_away();
+                    } else {
+                        dsc.beep(4);
+                    }
+                }
+                else if (key == '#') {
+                    if (keypadPinBuffer.length() > 0) {
+                        keypadPinBuffer = "";
+                        Serial.println("⌨️ [TECLADO DSC] PIN buffer borrado.");
+                    } else {
+                        // Quick Arm Away (only if ready)
+                        if (currentMode == DISARMED) {
+                            user_alarm_arm_away();
+                        }
+                    }
+                }
+                else if (key == '*') {
+                    // Start Command Mode
+                    isCommandMode = true;
+                    keypadPinBuffer = "";
+                    Serial.println("⌨️ [TECLADO DSC] Modo Comando Activo (*). Presione 1-4, 7 o 0.");
+                }
+            }
+        }
+    }
+
+    // 3. Monitor physical zones via GPIO
+    if (millis() - lastSamplingTime >= SAMPLING_INTERVAL) {
+        lastSamplingTime = millis();
+        for (auto& zone : physicalZones) {
+            if (zone.pin == 255 || user_alarm_is_zone_disabled(zone.sensorIndex)) continue;
+            int reading = digitalRead(zone.pin);
+            if (reading != zone.lastPinReading) {
+                zone.lastDebounceTime = millis();
+            }
+            if ((millis() - zone.lastDebounceTime) > DEBOUNCE_DELAY) {
+                bool isOpen = (reading == HIGH);
+                if (isOpen != sensors[zone.sensorIndex]) {
+                    trigger_zone_change(zone.sensorIndex, isOpen, "HARDWARE");
+                }
+            }
+            zone.lastPinReading = reading;
+        }
+    }
+ 
+    // 4. Handle Exit Delay Timer & Keypad Beeping
     if (currentMode == ARMING_AWAY || currentMode == ARMING_HOME) {
         unsigned long elapsed = millis() - armingStartTime;
         if (elapsed >= EXIT_DELAY_MS) {
@@ -87,6 +570,7 @@ extern "C" void user_alarm_loop() {
                 mqtt_publish_state("armed_home");
                 Serial.println("\n🏠 [SISTEMA] !!! ALARMA ARMADA (HOME) !!!");
             }
+            dsc.beep(3); // 3 rapid confirmation beeps on armed state
             print_status();
         } else {
             int secondsLeft = (EXIT_DELAY_MS - elapsed) / 1000;
@@ -94,41 +578,212 @@ extern "C" void user_alarm_loop() {
                 Serial.printf("⏳ ARMANDO EN %d SEG...\n", secondsLeft + 1);
                 lastSecondsLeft = secondsLeft;
             }
+            
+            // Beeps during Exit Delay
+            if (elapsed >= 10000) { // Last 5 seconds: fast beeps
+                if (millis() - lastKeypadBeepTime >= 333) {
+                    dsc.beep(1);
+                    lastKeypadBeepTime = millis();
+                }
+            } else { // First 10 seconds: slow beeps
+                if (millis() - lastKeypadBeepTime >= 1000) {
+                    dsc.beep(1);
+                    lastKeypadBeepTime = millis();
+                }
+            }
         }
     }
 
-    // Monitorización de sensores y sirena (solo si ya está armado)
-    if (currentMode == ARMED_AWAY || currentMode == ARMED_HOME) {
-        // (Lógica de sensores igual que antes)
+    // 5. Handle Entry Delay Timer & Keypad Beeping
+    if (currentMode == ENTRY_DELAY) {
+        unsigned long elapsed = millis() - entryDelayStartTime;
+        if (elapsed >= ENTRY_DELAY_MS) {
+            currentMode = TRIGGERED;
+            mqtt_publish_state("triggered");
+            Serial.println("\n🔴🔴🔴 [ALERTA] TIEMPO DE ENTRADA AGOTADO - INTRUSION DETECTADA 🔴🔴🔴");
+            dsc.buzzer(255); // Sound physical buzzer continuously for up to 255s
+            print_status();
+        } else {
+            int secondsLeft = (ENTRY_DELAY_MS - elapsed) / 1000;
+            if (secondsLeft != lastEntrySecondsLeft) {
+                Serial.printf("⚠️ [ALERTA] ALARMA SE DISPARARÁ EN %d SEG... ¡Haga tap con HomeKey! 🔊 ¡BEEP!\n", secondsLeft + 1);
+                lastEntrySecondsLeft = secondsLeft;
+            }
+
+            // Beeps during Entry Delay
+            if (elapsed >= 10000) { // Last 5 seconds: rapid warning beeps
+                if (millis() - lastKeypadBeepTime >= 250) {
+                    dsc.beep(1);
+                    lastKeypadBeepTime = millis();
+                }
+            } else { // First 10 seconds: slow beeps
+                if (millis() - lastKeypadBeepTime >= 1000) {
+                    dsc.beep(1);
+                    lastKeypadBeepTime = millis();
+                }
+            }
+        }
     }
 
+    // 6. Handle Serial Console Inputs
     if (Serial.available() > 0) {
         char c = toupper(Serial.read());
         if (c == 'A') user_alarm_arm_away();
         else if (c == 'D') user_alarm_disarm();
         else if (c >= '1' && c <= '8') {
             int idx = c - '1';
-            sensors[idx] = !sensors[idx];
-            bool trig = false;
-            if (currentMode == ARMED_AWAY && sensors[idx]) trig = true;
-            if (currentMode == ARMED_HOME && sensors[idx]) {
-                uint8_t mask = configManager->getConfig<espConfig::misc_config_t>().armedHomeZones;
-                if ((mask >> idx) & 0x01) trig = true;
-            }
-            if (trig) {
-                currentMode = TRIGGERED;
-                mqtt_publish_state("triggered");
-                Serial.println("\n🔴🔴🔴 [ALERTA] INTRUSION DETECTADA 🔴🔴🔴");
-            }
-            print_status();
+            trigger_zone_change(idx, !sensors[idx], "SIMULADO");
         }
     }
 
+    // 7. Handle Triggered Siren / Keypad Buzzer Wailing
     static unsigned long last_beep = 0;
-    if (currentMode == TRIGGERED && millis() - last_beep > 1000) {
+    if (currentMode == TRIGGERED && (last_beep == 0 || millis() - last_beep > 60000)) {
         Serial.println("📢 !!! SIRENA ACTIVA !!!");
+        dsc.buzzer(255); // Keep wailing (renew keepalive every 60s)
         last_beep = millis();
+    }
+    if (currentMode != TRIGGERED) {
+        last_beep = 0;
+    }
+
+    // 8. Synchronize physical keypad LEDs with system state in real-time
+    if (isBypassMode) {
+        // In bypass mode, zone LEDs show which zones are currently bypassed
+        dsc.lightZone1 = zoneBypassed[0] ? on : off;
+        dsc.lightZone2 = zoneBypassed[1] ? on : off;
+        dsc.lightZone3 = zoneBypassed[2] ? on : off;
+        dsc.lightZone4 = zoneBypassed[3] ? on : off;
+        dsc.lightZone5 = zoneBypassed[4] ? on : off;
+        dsc.lightZone6 = zoneBypassed[5] ? on : off;
+        dsc.lightZone7 = zoneBypassed[6] ? on : off;
+        dsc.lightZone8 = zoneBypassed[7] ? on : off;
+    } else if (isMemoryMode) {
+        // In memory mode, zone LEDs show which zones triggered the alarm
+        dsc.lightZone1 = zoneAlarmMemory[0] ? on : off;
+        dsc.lightZone2 = zoneAlarmMemory[1] ? on : off;
+        dsc.lightZone3 = zoneAlarmMemory[2] ? on : off;
+        dsc.lightZone4 = zoneAlarmMemory[3] ? on : off;
+        dsc.lightZone5 = zoneAlarmMemory[4] ? on : off;
+        dsc.lightZone6 = zoneAlarmMemory[5] ? on : off;
+        dsc.lightZone7 = zoneAlarmMemory[6] ? on : off;
+        dsc.lightZone8 = zoneAlarmMemory[7] ? on : off;
+    } else if (isTroubleMode) {
+        // In trouble mode: Zone 1 = WiFi trouble, Zone 2 = NFC trouble
+        dsc.lightZone1 = (!WiFi.isConnected()) ? on : off;
+        dsc.lightZone2 = (nfcManager == nullptr) ? on : off;
+        dsc.lightZone3 = off;
+        dsc.lightZone4 = off;
+        dsc.lightZone5 = off;
+        dsc.lightZone6 = off;
+        dsc.lightZone7 = off;
+        dsc.lightZone8 = off;
+    } else if (isSimulateMode || currentMode == DISARMED || currentMode == ARMING_AWAY || currentMode == ARMING_HOME) {
+        // Otherwise, show active zones when disarmed/arming
+        dsc.lightZone1 = sensors[0] ? on : off;
+        dsc.lightZone2 = sensors[1] ? on : off;
+        dsc.lightZone3 = sensors[2] ? on : off;
+        dsc.lightZone4 = sensors[3] ? on : off;
+        dsc.lightZone5 = sensors[4] ? on : off;
+        dsc.lightZone6 = sensors[5] ? on : off;
+        dsc.lightZone7 = sensors[6] ? on : off;
+        dsc.lightZone8 = sensors[7] ? on : off;
+    } else {
+        // System is armed (Armed, Entry Delay, Triggered): Zone LEDs must be OFF
+        dsc.lightZone1 = off;
+        dsc.lightZone2 = off;
+        dsc.lightZone3 = off;
+        dsc.lightZone4 = off;
+        dsc.lightZone5 = off;
+        dsc.lightZone6 = off;
+        dsc.lightZone7 = off;
+        dsc.lightZone8 = off;
+    }
+
+    // Ready LED Check (checking all 8 zones, skipping bypassed ones)
+    bool anyReadyZoneOpen = false;
+    for (int i = 0; i < 8; i++) {
+        if (sensors[i] && !zoneBypassed[i]) anyReadyZoneOpen = true;
+    }
+    dsc.lightReady = (currentMode == DISARMED && !anyReadyZoneOpen) ? on : off;
+
+    // Armed LED state
+    if (currentMode == ARMED_AWAY || currentMode == ARMED_HOME) {
+        dsc.lightArmed = on;
+    } else if (currentMode == ARMING_AWAY || currentMode == ARMING_HOME) {
+        dsc.lightArmed = blink;
+    } else {
+        dsc.lightArmed = off;
+    }
+
+    // Bypass LED state
+    bool anyBypassed = false;
+    for (int i = 0; i < 8; i++) {
+        if (zoneBypassed[i]) anyBypassed = true;
+    }
+    if (isBypassMode) {
+        dsc.lightBypass = blink;
+    } else {
+        dsc.lightBypass = anyBypassed ? on : off;
+    }
+
+    // Memory LED state
+    if (isMemoryMode) {
+        dsc.lightMemory = blink;
+    } else {
+        dsc.lightMemory = hasAlarmMemory ? on : off;
+    }
+
+    // Trouble LED state
+    bool hasTrouble = (!WiFi.isConnected());
+    if (isTroubleMode) {
+        dsc.lightTrouble = blink;
+    } else {
+        dsc.lightTrouble = hasTrouble ? on : off;
     }
 }
 
-extern "C" void user_alarm_failed_tap() { Serial.println("NFC Fail"); }
+extern "C" void user_alarm_failed_tap() { 
+    Serial.println("NFC Fail"); 
+    // Play warning tone pattern on keypad to indicate failed tap
+    dsc.beep(4); 
+}
+
+extern "C" bool user_alarm_is_zone_bypassed(int zoneIdx) {
+    if (zoneIdx >= 0 && zoneIdx < 8) {
+        return zoneBypassed[zoneIdx];
+    }
+    return false;
+}
+
+extern "C" void user_alarm_set_zone_bypass(int zoneIdx, bool bypassed) {
+    if (zoneIdx >= 0 && zoneIdx < 8) {
+        zoneBypassed[zoneIdx] = bypassed;
+        Serial.printf("ℹ️ [SISTEMA] Zone %d bypass changed to %s\n", zoneIdx + 1, bypassed ? "BYPASSED" : "ACTIVE");
+        
+        // Publish state to MQTT
+        if (mqttManager) {
+            std::string stateTopic = "home/alarm/zone/" + std::to_string(zoneIdx + 1) + "/bypass/state";
+            mqttManager->publish(stateTopic, bypassed ? "ON" : "OFF", 0, true);
+        }
+        
+        broadcast_ui_update();
+    }
+}
+
+extern "C" bool user_alarm_is_zone_disabled(int zoneIdx) {
+    if (zoneIdx < 0 || zoneIdx >= 8) return false;
+    auto& miscConfig = configManager->getConfig<espConfig::misc_config_t>();
+    switch (zoneIdx) {
+        case 0: return miscConfig.zoneDisabled1;
+        case 1: return miscConfig.zoneDisabled2;
+        case 2: return miscConfig.zoneDisabled3;
+        case 3: return miscConfig.zoneDisabled4;
+        case 4: return miscConfig.zoneDisabled5;
+        case 5: return miscConfig.zoneDisabled6;
+        case 6: return miscConfig.zoneDisabled7;
+        case 7: return miscConfig.zoneDisabled8;
+        default: return false;
+    }
+}
+

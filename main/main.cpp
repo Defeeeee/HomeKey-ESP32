@@ -1,4 +1,5 @@
 #include "include/user_alarm.h"
+#include <WiFi.h>
 #include <algorithm>
 #include <cstdint>
 #include <memory>
@@ -100,6 +101,14 @@ using namespace loggable;
  */
 void setup() {
   Serial.begin(115200);
+  IPAddress local_IP(192, 168, 68, 200);
+  IPAddress gateway(192, 168, 68, 1);
+  IPAddress subnet(255, 255, 255, 0);
+  IPAddress dns(1, 1, 1, 1);
+  if (!WiFi.config(local_IP, gateway, subnet, dns)) {
+    ESP_LOGE("Main", "WiFi.config failed to apply static IP");
+  }
+  homeSpan.setWifiCredentials("defeWifi", "fedeazeth1");
   loggable::espidf::LogHook::install(false, true);
   Sinker::instance().add_sinker(std::make_shared<loggable::ConsoleLogSinker>());
   esp_err_t err = esp_event_loop_create_default();
@@ -165,6 +174,8 @@ void setup() {
     }
   } else {
   nfc_init:
+    // NFC temporarily disabled because hardware is not attached yet
+    /*
     nfcManager = std::make_unique<NfcManager>(*readerDataManager,
                                 miscConfig.nfcPinsPreset == PIN_UNSET ? miscConfig.nfcGpioPins : nfcGpioPinsPresets[miscConfig.nfcPinsPreset].gpioPins,
                                 miscConfig.nfcReaderType,
@@ -173,6 +184,8 @@ void setup() {
                                 miscConfig.hkAuthPrecomputeEnabled,
                                 miscConfig.nfcFastPollingEnabled);
     nfcManager->begin();
+    */
+    ESP_LOGI("Main", "NFC Module disabled (temporarily for hardware bypass)");
   }
   webServerManager->setNfcManager(nfcManager.get());
   webServerManager->setMqttManager(mqttManager.get());
@@ -203,5 +216,5 @@ void loop() {
   user_alarm_loop();
   if(pollHS)
     homeSpan.poll();
-  vTaskDelay(pdMS_TO_TICKS(50));
+  vTaskDelay(1);
 }
