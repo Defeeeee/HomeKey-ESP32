@@ -277,9 +277,10 @@ extern "C" void user_alarm_setup() {
 
 extern "C" void user_alarm_arm_home() {
     if (currentMode != ARMED_HOME && currentMode != ARMING_HOME) {
-        // Ready Check (checking all 8 zones, skipping bypassed ones)
+        // Ready Check (checking all 8 zones, skipping bypassed ones and motion sensor Zone 2)
         bool anyZoneOpen = false;
         for (int i = 0; i < 8; i++) {
+            if (i == 1) continue; // Ignore Zone 2 (motion sensor) for ready check
             if (sensors[i] && !zoneBypassed[i]) anyZoneOpen = true;
         }
         if (anyZoneOpen) {
@@ -305,9 +306,10 @@ extern "C" void user_alarm_arm_home() {
 
 extern "C" void user_alarm_arm_away() {
     if (currentMode != ARMED_AWAY && currentMode != ARMING_AWAY) {
-        // Ready Check (checking all 8 zones, skipping bypassed ones)
+        // Ready Check (checking all 8 zones, skipping bypassed ones and motion sensor Zone 2)
         bool anyZoneOpen = false;
         for (int i = 0; i < 8; i++) {
+            if (i == 1) continue; // Ignore Zone 2 (motion sensor) for ready check
             if (sensors[i] && !zoneBypassed[i]) anyZoneOpen = true;
         }
         if (anyZoneOpen) {
@@ -700,9 +702,10 @@ extern "C" void user_alarm_loop() {
         dsc.lightZone8 = off;
     }
 
-    // Ready LED Check (checking all 8 zones, skipping bypassed ones)
+    // Ready LED Check (checking all 8 zones, skipping bypassed ones and motion sensor Zone 2)
     bool anyReadyZoneOpen = false;
     for (int i = 0; i < 8; i++) {
+        if (i == 1) continue; // Ignore Zone 2 (motion sensor) for ready LED check
         if (sensors[i] && !zoneBypassed[i]) anyReadyZoneOpen = true;
     }
     dsc.lightReady = (currentMode == DISARMED && !anyReadyZoneOpen) ? on : off;
