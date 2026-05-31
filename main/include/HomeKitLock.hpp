@@ -77,7 +77,19 @@ private:
         NFCAccessService(ReaderDataManager& readerDataManager);
         boolean update() override;
     };
+    struct SecuritySystemService : Service::SecuritySystem {
+        SpanCharacteristic* m_currentState;
+        SpanCharacteristic* m_targetState;
+        SecuritySystemService(HomeKitLock& bridge);
+        boolean update() override;
+    };
     struct PhysicalLockBatteryService : Service::BatteryService {
         PhysicalLockBatteryService(HomeKitLock& bridge);
     };
+
+    SpanCharacteristic* m_alarmCurrentState = nullptr;
+    SpanCharacteristic* m_alarmTargetState = nullptr;
+    AppEventLoop::SubscriptionHandle m_alarm_event;
+    void updateAlarmState(const std::string& state);
 };
+

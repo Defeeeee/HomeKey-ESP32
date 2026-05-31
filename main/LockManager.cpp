@@ -66,6 +66,15 @@ LockManager::LockManager(const espConfig::misc_config_t& miscConfig, const espCo
     .skip_unhandled_events = false
   };
   esp_timer_create(&momentaryStateTimer_arg, &momentaryStateTimer);
+  m_alarm_state_event = AppEventLoop::subscribe(ALARM_EVENT, ALARM_STATE_CHANGED, [&](const uint8_t* data, size_t size){
+      if(size == 0 || data == nullptr) return;
+      std::string state(reinterpret_cast<const char*>(data), size);
+      if (state == "disarmed") {
+          overrideState(lockStates::UNLOCKED, lockStates::UNLOCKED, Source::INTERNAL);
+      } else if (state == "armed_away" || state == "armed_home") {
+          overrideState(lockStates::LOCKED, lockStates::LOCKED, Source::INTERNAL);
+      }
+  });
 }
 
 /**
