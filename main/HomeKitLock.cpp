@@ -235,14 +235,11 @@ void HomeKitLock::begin() {
     homeSpan.enableAutoStartAP();
     homeSpan.enableOTA(miscConfig.otaPasswd.c_str());
     homeSpan.setPortNum(1201);
-    uint8_t mac[6];
-    esp_read_mac(mac, ESP_MAC_BT);
-    const std::string macStr = fmt::format("{:02X}{:02X}{:02X}{:02X}", mac[2], mac[3], mac[4], mac[5]);
-    homeSpan.setHostNameSuffix(macStr.c_str());
+    homeSpan.setHostNameSuffix("");
 
     initializeETH();
 
-    homeSpan.begin(Category::Locks, miscConfig.deviceName.c_str(), "HK-", "HomeKey-ESP32");
+    homeSpan.begin(Category::Locks, miscConfig.deviceName.c_str(), "esp32-alarm", "HomeKey-ESP32");
 
     new SpanAccessory();
       new NFCAIS(miscConfig);
