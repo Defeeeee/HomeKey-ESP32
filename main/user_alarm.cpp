@@ -9,6 +9,10 @@
 #include "include/ConfigManager.hpp"
 #include "include/MqttManager.hpp"
 #include "include/WebServerManager.hpp"
+#include <sodium/crypto_sign.h>
+#include <sodium/crypto_box.h>
+#include "HAP.h"
+#include <HomeSpan.h>
 #include <dscKeybusInterface.h>
 
 enum AlarmMode { DISARMED, ARMING_AWAY, ARMING_HOME, ARMED_AWAY, ARMED_HOME, ENTRY_DELAY, TRIGGERED };
@@ -60,6 +64,10 @@ bool isBypassMode = false;
 bool isMemoryMode = false;
 bool isTroubleMode = false;
 bool isSimulateMode = false;
+bool isWaitingForInstallerCode = false;
+bool isInstallerMode = false;
+bool isRssiMeterMode = false;
+unsigned long lastKeypadActivityTime = 0;
 
 extern std::unique_ptr<ConfigManager> configManager;
 extern std::unique_ptr<MqttManager> mqttManager;
@@ -74,6 +82,8 @@ void broadcast_ui_update() {
 }
 
 void mqtt_publish_state(const char* state) {
+    lastKeypadActivityTime = millis();
+    dsc.lightBacklight = on;
     AppEventLoop::publish(ALARM_EVENT, ALARM_STATE_CHANGED, (const uint8_t*)state, strlen(state));
     broadcast_ui_update();
 }
@@ -264,6 +274,7 @@ extern "C" void user_alarm_setup() {
     dsc.lightArmed = off;
     dsc.lightTrouble = off;
     dsc.lightBacklight = on;
+    lastKeypadActivityTime = millis();
 
     mqtt_publish_state("disarmed");
     m_remote_event = AppEventLoop::subscribe(ALARM_EVENT, ALARM_SET_REMOTE, [](const uint8_t* data, size_t size){
@@ -365,6 +376,8 @@ extern "C" void user_alarm_loop() {
 
     // 2. Handle Keypad input
     if (dsc.key != 0xFF) {
+        lastKeypadActivityTime = millis();
+        dsc.lightBacklight = on;
         byte rawKey = dsc.key;
         dsc.key = 0xFF; // Clear buffer
         char key = decodeDscKey(rawKey);
@@ -400,6 +413,51 @@ extern "C" void user_alarm_loop() {
 
             Serial.printf("⌨️ [TECLADO DSC] Tecla presionada: [ %c ]\n", key);
             // (Keypad hardware automatically generates keypress audio feedback)
+
+            if (isWaitingForInstallerCode) {
+                if (key >= '0' && key <= '9') {
+                    keypadPinBuffer += key;
+                    Serial.printf("⌨️ [TECLADO DSC] Código Instalador: %s\n", keypadPinBuffer.c_str());
+                    if (keypadPinBuffer.length() == 4) {
+                        if (keypadPinBuffer == "5555") {
+                            isInstallerMode = true;
+                            Serial.println("🔑 [TECLADO DSC] Código correcto. Menú Instalador (*8): 9=Reiniciar, 2=Medidor RSSI, #=Salir.");
+                            dsc.beep(3);
+                        } else {
+                            Serial.println("❌ [TECLADO DSC] Código incorrecto!");
+                            dsc.beep(4);
+                        }
+                        keypadPinBuffer = "";
+                        isWaitingForInstallerCode = false;
+                    }
+                } else if (key == '#' || key == '*') {
+                    isWaitingForInstallerCode = false;
+                    keypadPinBuffer = "";
+                    Serial.println("⌨️ [TECLADO DSC] Cancelado.");
+                    dsc.beep(1);
+                }
+                return;
+            }
+            if (isInstallerMode) {
+                if (key == '9') {
+                    Serial.println("🔄 [TECLADO DSC] Reiniciando ESP32...");
+                    dsc.beep(2);
+                    vTaskDelay(pdMS_TO_TICKS(500));
+                    esp_restart();
+                } else if (key == '2') {
+                    isRssiMeterMode = !isRssiMeterMode;
+                    Serial.printf("⌨️ [TECLADO DSC] Medidor RSSI %s\n", isRssiMeterMode ? "ACTIVADO" : "DESACTIVADO");
+                    dsc.beep(isRssiMeterMode ? 3 : 1);
+                } else if (key == '#' || key == '*') {
+                    isInstallerMode = false;
+                    isRssiMeterMode = false;
+                    Serial.println("⌨️ [TECLADO DSC] Saliendo del menú de instalador.");
+                    dsc.beep(1);
+                } else {
+                    dsc.beep(4);
+                }
+                return;
+            }
 
             if (isBypassMode) {
                 if (key >= '1' && key <= '8') {
@@ -474,6 +532,10 @@ extern "C" void user_alarm_loop() {
                     } else {
                         dsc.beep(4);
                     }
+                } else if (key == '8') {
+                    isWaitingForInstallerCode = true;
+                    keypadPinBuffer = "";
+                    Serial.println("⌨️ [TECLADO DSC] Ingrese Código de Instalador de 4 dígitos...");
                 } else if (key == '#' || key == '*') {
                     Serial.println("⌨️ [TECLADO DSC] Cancelado.");
                 } else {
@@ -650,7 +712,29 @@ extern "C" void user_alarm_loop() {
     }
 
     // 8. Synchronize physical keypad LEDs with system state in real-time
-    if (isBypassMode) {
+    if (isRssiMeterMode) {
+        // Map RSSI level to 1-8 LEDs
+        int leds = 0;
+        if (WiFi.isConnected()) {
+            int32_t rssi = WiFi.RSSI();
+            if (rssi < -85) leds = 1;
+            else if (rssi < -80) leds = 2;
+            else if (rssi < -75) leds = 3;
+            else if (rssi < -70) leds = 4;
+            else if (rssi < -65) leds = 5;
+            else if (rssi < -60) leds = 6;
+            else if (rssi < -55) leds = 7;
+            else leds = 8;
+        }
+        dsc.lightZone1 = (leds >= 1) ? on : off;
+        dsc.lightZone2 = (leds >= 2) ? on : off;
+        dsc.lightZone3 = (leds >= 3) ? on : off;
+        dsc.lightZone4 = (leds >= 4) ? on : off;
+        dsc.lightZone5 = (leds >= 5) ? on : off;
+        dsc.lightZone6 = (leds >= 6) ? on : off;
+        dsc.lightZone7 = (leds >= 7) ? on : off;
+        dsc.lightZone8 = (leds >= 8) ? on : off;
+    } else if (isBypassMode) {
         // In bypass mode, zone LEDs show which zones are currently bypassed
         dsc.lightZone1 = zoneBypassed[0] ? on : off;
         dsc.lightZone2 = zoneBypassed[1] ? on : off;
@@ -671,11 +755,11 @@ extern "C" void user_alarm_loop() {
         dsc.lightZone7 = zoneAlarmMemory[6] ? on : off;
         dsc.lightZone8 = zoneAlarmMemory[7] ? on : off;
     } else if (isTroubleMode) {
-        // In trouble mode: Zone 1 = WiFi trouble, Zone 2 = NFC trouble
+        // In trouble mode: Zone 1 = WiFi, Zone 2 = NFC, Zone 3 = MQTT, Zone 4 = HomeKit
         dsc.lightZone1 = (!WiFi.isConnected()) ? on : off;
         dsc.lightZone2 = (nfcManager == nullptr) ? on : off;
-        dsc.lightZone3 = off;
-        dsc.lightZone4 = off;
+        dsc.lightZone3 = (!mqttManager || !mqttManager->isConnected()) ? on : off;
+        dsc.lightZone4 = (HAPClient::nAdminControllers() == 0) ? on : off;
         dsc.lightZone5 = off;
         dsc.lightZone6 = off;
         dsc.lightZone7 = off;
@@ -737,12 +821,22 @@ extern "C" void user_alarm_loop() {
         dsc.lightMemory = hasAlarmMemory ? on : off;
     }
 
-    // Trouble LED state
-    bool hasTrouble = (!WiFi.isConnected());
+    // Trouble LED state: active if WiFi or MQTT is offline
+    bool hasTrouble = (!WiFi.isConnected() || (!mqttManager || !mqttManager->isConnected()));
     if (isTroubleMode) {
         dsc.lightTrouble = blink;
     } else {
         dsc.lightTrouble = hasTrouble ? on : off;
+    }
+
+    // Auto-Backlight Dimming (30-second timeout, only when DISARMED or ARMED)
+    if (currentMode == DISARMED || currentMode == ARMED_AWAY || currentMode == ARMED_HOME) {
+        if (millis() - lastKeypadActivityTime > 30000) {
+            dsc.lightBacklight = off;
+        }
+    } else {
+        // Keep backlight active during exit delay, entry delay, and triggered states
+        dsc.lightBacklight = on;
     }
 }
 
