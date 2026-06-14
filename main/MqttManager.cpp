@@ -163,6 +163,7 @@ bool MqttManager::begin(std::string deviceID) {
     mqtt_cfg.session.last_will.msg_len = 7;
     mqtt_cfg.session.last_will.retain = true;
     mqtt_cfg.session.last_will.qos = 1;
+    mqtt_cfg.session.keepalive = 15;
 
     m_client = esp_mqtt_client_init(&mqtt_cfg);
     if (!m_client) {
