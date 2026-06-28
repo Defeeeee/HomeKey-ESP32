@@ -568,6 +568,51 @@
 									</div>
 								</div>
 
+								<!-- Auto-Protect Settings -->
+								<div class="space-y-3 bg-base-100 p-3 rounded-lg border border-base-200">
+									<div class="flex items-center justify-between">
+										<div>
+											<h4 class="text-xs font-semibold">Auto-Protect (No-Motion Auto-Arming)</h4>
+											<p class="text-xs text-base-content/60">Automatically arm the system after a period of inactivity.</p>
+										</div>
+										<input
+											type="checkbox"
+											bind:checked={miscConfig.autoArmEnabled}
+											class="toggle toggle-primary toggle-sm"
+										/>
+									</div>
+
+									{#if miscConfig.autoArmEnabled}
+										<div class="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
+											<div class="form-control">
+												<label class="label">
+													<span class="label-text text-xs">Inactivity Timeout (minutes)</span>
+												</label>
+												<input
+													type="number"
+													bind:value={miscConfig.autoArmTimeoutMins}
+													min="1"
+													max="1440"
+													class="input input-sm input-bordered w-full"
+													required
+												/>
+											</div>
+											<div class="form-control">
+												<label class="label">
+													<span class="label-text text-xs">Arming Mode</span>
+												</label>
+												<select
+													bind:value={miscConfig.autoArmMode}
+													class="select select-sm select-bordered w-full"
+												>
+													<option value={0}>Stay / Home Mode</option>
+													<option value={1}>Away Mode</option>
+												</select>
+											</div>
+										</div>
+									{/if}
+								</div>
+
 								<div class="space-y-2">
 									<h4 class="text-xs font-semibold">Alarm Zones (Armed Home Mode)</h4>
 									<p class="text-xs text-base-content/60">Select which security zones are active and monitored when the system is armed in Home mode.</p>

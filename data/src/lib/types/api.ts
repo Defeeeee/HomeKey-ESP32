@@ -169,6 +169,12 @@ export interface MiscConfig {
   btrLowStatusThreshold: number;
   /** Enable proximity battery monitoring */
   proxBatEnabled: boolean;
+  /** Enable auto-arm on inactivity (Auto-Protect) */
+  autoArmEnabled: boolean;
+  /** Inactivity timeout in minutes before auto-arm */
+  autoArmTimeoutMins: number;
+  /** Arm mode for auto-arm (0 = Stay/Home, 1 = Away) */
+  autoArmMode: number;
   /** Enable Ethernet connectivity */
   ethernetEnabled: boolean;
   /** Active Ethernet preset index */
