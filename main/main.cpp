@@ -193,9 +193,9 @@ void setup() {
 
   WiFi.onEvent([](arduino_event_id_t event){
     if(wifiDisconnectCount >= 6){
-      ESP_LOGW("Main", "Wi-Fi disconnected 6 times consecutively. Triggering HomeSpan Config AP mode.");
-      homeSpan.processSerialCommand("A");
-      wifiDisconnectCount = 0;
+      ESP_LOGE("Main", "Wi-Fi disconnected 6 times consecutively. Restarting system...");
+      vTaskDelay(pdMS_TO_TICKS(100));
+      esp_restart();
     } else {
       wifiDisconnectCount++;
       ESP_LOGW("Main", "Wi-Fi disconnected. Consecutive failure count: %d", wifiDisconnectCount);
