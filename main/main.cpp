@@ -37,6 +37,7 @@ std::unique_ptr<NfcManager> nfcManager;
 
 static dns_server_handle_t dns_server = NULL;
 
+static int wifiDisconnectCount = 0;
 bool pollHS = false;
 
 static void dhcp_set_captiveportal_url(void) {
@@ -187,12 +188,17 @@ void setup() {
   homekitLock->begin();
   lockManager->begin();
   WiFi.onEvent([](arduino_event_id_t event){
-    static uint8_t count = 0;
-    if(count >= 6){
+    wifiDisconnectCount = 0;
+  }, ARDUINO_EVENT_WIFI_STA_GOT_IP);
+
+  WiFi.onEvent([](arduino_event_id_t event){
+    if(wifiDisconnectCount >= 6){
+      ESP_LOGW("Main", "Wi-Fi disconnected 6 times consecutively. Triggering HomeSpan Config AP mode.");
       homeSpan.processSerialCommand("A");
-      count = 0;
+      wifiDisconnectCount = 0;
     } else {
-      count++;
+      wifiDisconnectCount++;
+      ESP_LOGW("Main", "Wi-Fi disconnected. Consecutive failure count: %d", wifiDisconnectCount);
     }
   }, ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
   pollHS = true;
