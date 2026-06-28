@@ -894,12 +894,34 @@ extern "C" void user_alarm_loop() {
         unsigned long elapsed = millis() - lastSystemActivityTime;
         unsigned long timeoutMs = (unsigned long)miscConfig.autoArmTimeoutMins * 60000;
         if (elapsed >= timeoutMs) {
-            Serial.printf("🕒 [AUTO-PROTECT] Inactividad detectada (%lu mins). Auto-armando...\n", (unsigned long)miscConfig.autoArmTimeoutMins);
-            lastSystemActivityTime = millis(); // Reset to wait next timeout if arming fails
-            if (miscConfig.autoArmMode == 0) {
-                user_alarm_arm_home();
+            // Ready Check (checking all 8 zones, skipping bypassed ones and motion sensor Zone 2)
+            bool anyZoneOpen = false;
+            for (int i = 0; i < 8; i++) {
+                if (i == 1) continue; // Ignore Zone 2 (motion sensor) for ready check
+                if (sensors[i] && !zoneBypassed[i]) anyZoneOpen = true;
+            }
+
+            lastSystemActivityTime = millis(); // Reset to wait next timeout if arming fails/succeeds
+
+            if (anyZoneOpen) {
+                Serial.println("\n⚠️ [AUTO-PROTECT] No se puede auto-armar: Zonas abiertas.");
+                dsc.beep(4); // Play error chirp
             } else {
-                user_alarm_arm_away();
+                Serial.printf("🕒 [AUTO-PROTECT] Inactividad detectada (%lu mins). Auto-armado instantáneo con chirp...\n", (unsigned long)miscConfig.autoArmTimeoutMins);
+                
+                // Clear alarm memory on arming
+                memset(zoneAlarmMemory, 0, sizeof(zoneAlarmMemory));
+                hasAlarmMemory = false;
+
+                if (miscConfig.autoArmMode == 0) {
+                    update_current_mode(ARMED_HOME);
+                    mqtt_publish_state("armed_home");
+                } else {
+                    update_current_mode(ARMED_AWAY);
+                    mqtt_publish_state("armed_away");
+                }
+                dsc.beep(1); // Play single confirmation chirp
+                print_status();
             }
         }
     }
