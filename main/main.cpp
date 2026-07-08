@@ -37,6 +37,7 @@ std::unique_ptr<NfcManager> nfcManager;
 
 static dns_server_handle_t dns_server = NULL;
 
+static int wifiDisconnectCount = 0;
 bool pollHS = false;
 
 static void dhcp_set_captiveportal_url(void) {
@@ -101,14 +102,7 @@ using namespace loggable;
  */
 void setup() {
   Serial.begin(115200);
-  IPAddress local_IP(192, 168, 68, 200);
-  IPAddress gateway(192, 168, 68, 1);
-  IPAddress subnet(255, 255, 255, 0);
-  IPAddress dns(1, 1, 1, 1);
-  if (!WiFi.config(local_IP, gateway, subnet, dns)) {
-    ESP_LOGE("Main", "WiFi.config failed to apply static IP");
-  }
-  homeSpan.setWifiCredentials("defeWifi", "fedeazeth1");
+  WiFi.setHostname("esp32-alarm");
   loggable::espidf::LogHook::install(false, true);
   Sinker::instance().add_sinker(std::make_shared<loggable::ConsoleLogSinker>());
   esp_err_t err = esp_event_loop_create_default();
@@ -193,12 +187,17 @@ void setup() {
   homekitLock->begin();
   lockManager->begin();
   WiFi.onEvent([](arduino_event_id_t event){
-    static uint8_t count = 0;
-    if(count >= 6){
-      homeSpan.processSerialCommand("A");
-      count = 0;
+    wifiDisconnectCount = 0;
+  }, ARDUINO_EVENT_WIFI_STA_GOT_IP);
+
+  WiFi.onEvent([](arduino_event_id_t event){
+    if(wifiDisconnectCount >= 6){
+      ESP_LOGE("Main", "Wi-Fi disconnected 6 times consecutively. Restarting system...");
+      vTaskDelay(pdMS_TO_TICKS(100));
+      esp_restart();
     } else {
-      count++;
+      wifiDisconnectCount++;
+      ESP_LOGW("Main", "Wi-Fi disconnected. Consecutive failure count: %d", wifiDisconnectCount);
     }
   }, ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
   pollHS = true;

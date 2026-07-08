@@ -99,7 +99,7 @@ namespace espConfig
     mqttConfig_t(){
       std::string id = platform_create_id_string();
       mqttClientId = id;
-      lwtTopic.append(id).append("/" MQTT_LWT_TOPIC);
+      lwtTopic = "home/alarm/status";
       hkTopic.append(id).append("/" MQTT_AUTH_TOPIC);
       lockStateTopic.append(id).append("/" MQTT_STATE_TOPIC);
       lockStateCmd.append(id).append("/" MQTT_SET_STATE_TOPIC);
@@ -192,6 +192,9 @@ namespace espConfig
     std::array<uint8_t, 5> ethRmiiConfig = {ETH_RMII_CONF_PHY_ADDR, ETH_RMII_CONF_MDC_PIN, ETH_RMII_CONF_MDIO_PIN, ETH_RMII_CONF_POWER_PIN, ETH_RMII_CONF_RMII_CLOCK_MODE};
     std::array<uint8_t, 7> ethSpiConfig = {ETH_SPI_CONF_SPI_FREQ_MHZ, ETH_SPI_CONF_PIN_CS, ETH_SPI_CONF_PIN_IRQ, ETH_SPI_CONF_PIN_RST, ETH_SPI_CONF_PIN_SCK, ETH_SPI_CONF_PIN_MISO, ETH_SPI_CONF_PIN_MOSI};
     uint8_t logLevel = ESP_LOG_ERROR;
+    bool autoArmEnabled = false;
+    uint16_t autoArmTimeoutMins = 120;
+    uint8_t autoArmMode = 0;
     uint8_t armedHomeZones = 0xFF;
     uint8_t dscClockPin = 21;
     uint8_t dscReadPin = 18;
@@ -200,8 +203,8 @@ namespace espConfig
     uint8_t zonePin2 = 17;
     uint8_t zonePin3 = 14;
     uint8_t zonePin4 = 25;
-    uint8_t zonePin5 = 26;
-    uint8_t zonePin6 = 27;
+    uint8_t zonePin5 = 27; // Physical Pin 27 for Zone 5
+    uint8_t zonePin6 = 255;
     uint8_t zonePin7 = 32;
     uint8_t zonePin8 = 255;
     bool zoneDisabled1 = false;

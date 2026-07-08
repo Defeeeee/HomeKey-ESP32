@@ -174,6 +174,26 @@
 			</a>
 		</li>
 		<li class="my-1" role="menuitem">
+			<a href={p('/diagnostics')} class="text-lg flex items-center hover:bg-white/5 rounded-xl px-3 py-2.5 transition-all duration-200" {@attach isActiveLink({ className: 'bg-white/10 text-white font-semibold border border-white/5 shadow-md' })}>
+				<svg
+					xmlns="http://www.w3.org/2000/svg"
+					class="h-6 w-6 mr-1"
+					fill="none"
+					viewBox="0 0 24 24"
+					stroke="currentColor"
+					stroke-width="1.5"
+					aria-hidden="true"
+				>
+					<path
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						d="M7.5 14.25v2.25m3-4.5v4.5m3-6.75v6.75m3-9v9M6 20.25h12A2.25 2.25 0 0 0 20.25 18V6A2.25 2.25 0 0 0 18 3.75H6A2.25 2.25 0 0 0 3.75 6v12A2.25 2.25 0 0 0 6 20.25Z"
+					/>
+				</svg>
+				Diagnostics
+			</a>
+		</li>
+		<li class="my-1" role="menuitem">
 			<a href={p('/logs')} class="text-lg flex items-center hover:bg-white/5 rounded-xl px-3 py-2.5 transition-all duration-200" {@attach isActiveLink({ className: 'bg-white/10 text-white font-semibold border border-white/5 shadow-md' })}>
 				<svg
 					xmlns="http://www.w3.org/2000/svg"

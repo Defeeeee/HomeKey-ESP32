@@ -9,7 +9,13 @@
 #include "include/ConfigManager.hpp"
 #include "include/MqttManager.hpp"
 #include "include/WebServerManager.hpp"
+#include <sodium/crypto_sign.h>
+#include <sodium/crypto_box.h>
+#include "HAP.h"
+#include <HomeSpan.h>
 #include <dscKeybusInterface.h>
+#include <nvs.h>
+#include <nvs_flash.h>
 
 enum AlarmMode { DISARMED, ARMING_AWAY, ARMING_HOME, ARMED_AWAY, ARMED_HOME, ENTRY_DELAY, TRIGGERED };
 AlarmMode currentMode = DISARMED;
@@ -34,7 +40,7 @@ ZoneConfig physicalZones[8] = {
 
 const unsigned long DEBOUNCE_DELAY = 50; // ms
 unsigned long lastSamplingTime = 0;
-const unsigned long SAMPLING_INTERVAL = 200; // Muestreo cada 200ms
+const unsigned long SAMPLING_INTERVAL = 20; // Muestreo cada 20ms
 bool sensors[8] = {false, false, false, false, false, false, false, false};
 AppEventLoop::SubscriptionHandle m_remote_event;
 
@@ -60,6 +66,45 @@ bool isBypassMode = false;
 bool isMemoryMode = false;
 bool isTroubleMode = false;
 bool isSimulateMode = false;
+bool isWaitingForInstallerCode = false;
+bool isInstallerMode = false;
+bool isRssiMeterMode = false;
+bool isMacroMode = false;
+unsigned long lastKeypadActivityTime = 0;
+unsigned long lastSystemActivityTime = 0;
+
+void save_alarm_state(AlarmMode mode) {
+    nvs_handle_t my_handle;
+    esp_err_t err = nvs_open("SAVED_DATA", NVS_READWRITE, &my_handle);
+    if (err == ESP_OK) {
+        nvs_set_u8(my_handle, "alarm_state_val", (uint8_t)mode);
+        nvs_commit(my_handle);
+        nvs_close(my_handle);
+        Serial.printf("💾 [ALARM] Guardado estado de alarma en NVS: %d\n", mode);
+    }
+}
+
+AlarmMode restore_alarm_state() {
+    nvs_handle_t my_handle;
+    uint8_t mode_val = (uint8_t)DISARMED;
+    esp_err_t err = nvs_open("SAVED_DATA", NVS_READONLY, &my_handle);
+    if (err == ESP_OK) {
+        err = nvs_get_u8(my_handle, "alarm_state_val", &mode_val);
+        nvs_close(my_handle);
+        if (err == ESP_OK) {
+            Serial.printf("💾 [ALARM] Restaurado estado de alarma desde NVS: %d\n", mode_val);
+            return (AlarmMode)mode_val;
+        }
+    }
+    return DISARMED;
+}
+
+void update_current_mode(AlarmMode mode) {
+    if (currentMode != mode) {
+        currentMode = mode;
+        save_alarm_state(mode);
+    }
+}
 
 extern std::unique_ptr<ConfigManager> configManager;
 extern std::unique_ptr<MqttManager> mqttManager;
@@ -74,6 +119,8 @@ void broadcast_ui_update() {
 }
 
 void mqtt_publish_state(const char* state) {
+    lastKeypadActivityTime = millis();
+    dsc.lightBacklight = on;
     AppEventLoop::publish(ALARM_EVENT, ALARM_STATE_CHANGED, (const uint8_t*)state, strlen(state));
     broadcast_ui_update();
 }
@@ -102,6 +149,7 @@ static char decodeDscKey(byte rawCode) {
 // Global helper to process zone transitions and state rules
 void trigger_zone_change(int zoneIdx, bool isOpen, const char* sourceName) {
     if (zoneIdx < 0 || zoneIdx >= 8) return;
+    lastSystemActivityTime = millis();
     
     if (user_alarm_is_zone_disabled(zoneIdx)) {
         sensors[zoneIdx] = false;
@@ -110,7 +158,7 @@ void trigger_zone_change(int zoneIdx, bool isOpen, const char* sourceName) {
     
     sensors[zoneIdx] = isOpen;
     int zoneId = zoneIdx + 1;
-    if (mqttManager) mqttManager->publishSensorState(zoneId, isOpen);
+    if (mqttManager && strcmp(sourceName, "MQTT-RF") != 0) mqttManager->publishSensorState(zoneId, isOpen);
     Serial.printf("⚡ [%s] Cambio en Zona %d: %s\n", sourceName, zoneId, isOpen ? "OPEN" : "CLOSED");
     broadcast_ui_update();
 
@@ -147,7 +195,7 @@ void trigger_zone_change(int zoneIdx, bool isOpen, const char* sourceName) {
                 }
             }
         } else if (currentMode == ENTRY_DELAY) {
-            if (zoneId != 1) {
+            if (zoneId != 1 && zoneId != 2) { // Ignore Zone 2 (motion sensor) during entry delay
                 if (armedModeBeforeDelay == ARMED_AWAY) {
                     shouldTrigger = true;
                 } else if (armedModeBeforeDelay == ARMED_HOME) {
@@ -162,14 +210,14 @@ void trigger_zone_change(int zoneIdx, bool isOpen, const char* sourceName) {
 
     if (shouldStartEntryDelay) {
         armedModeBeforeDelay = currentMode;
-        currentMode = ENTRY_DELAY;
+        update_current_mode(ENTRY_DELAY);
         entryDelayStartTime = millis();
         lastEntrySecondsLeft = -1;
         mqtt_publish_state("pending");
         Serial.printf("\n⏳ [SISTEMA] Puerta principal abierta (%s). INICIANDO RETARDO DE ENTRADA (15s)...\n", sourceName);
     }
     if (shouldTrigger) {
-        currentMode = TRIGGERED;
+        update_current_mode(TRIGGERED);
         zoneAlarmMemory[zoneIdx] = true;
         hasAlarmMemory = true;
         mqtt_publish_state("triggered");
@@ -196,6 +244,12 @@ extern "C" bool user_alarm_get_sensor_state(int id) {
         return sensors[id - 1];
     }
     return false;
+}
+
+extern "C" void user_alarm_set_sensor_state(int id, bool isOpen) {
+    if (id >= 1 && id <= 8) {
+        trigger_zone_change(id - 1, isOpen, "MQTT-RF");
+    }
 }
 
 void print_status() {
@@ -236,7 +290,10 @@ extern "C" void user_alarm_setup() {
             sensors[zone.sensorIndex] = false;
         }
     }
-    currentMode = DISARMED;
+    currentMode = restore_alarm_state();
+    if (currentMode == ARMING_AWAY) currentMode = ARMED_AWAY;
+    if (currentMode == ARMING_HOME) currentMode = ARMED_HOME;
+    if (currentMode == ENTRY_DELAY) currentMode = ARMED_AWAY; // safety fallback
 
     // Start the virtual panel
     uint8_t clockPin = miscConfig.dscClockPin;
@@ -259,13 +316,20 @@ extern "C" void user_alarm_setup() {
     dsc.begin();
     dsc.key = 0xFF; // Reset to custom idle state 
     
-    // Set initial "Clean" board state
-    dsc.lightReady = on;
-    dsc.lightArmed = off;
+    // Set initial board state based on restored currentMode
+    if (currentMode == ARMED_AWAY || currentMode == ARMED_HOME) {
+        dsc.lightReady = off;
+        dsc.lightArmed = on;
+    } else {
+        dsc.lightReady = on;
+        dsc.lightArmed = off;
+    }
     dsc.lightTrouble = off;
     dsc.lightBacklight = on;
+    lastKeypadActivityTime = millis();
+    lastSystemActivityTime = millis();
 
-    mqtt_publish_state("disarmed");
+    mqtt_publish_state(user_alarm_get_state_string());
     m_remote_event = AppEventLoop::subscribe(ALARM_EVENT, ALARM_SET_REMOTE, [](const uint8_t* data, size_t size){
         if(size == 0) return;
         std::string cmd(reinterpret_cast<const char*>(data), size);
@@ -276,10 +340,12 @@ extern "C" void user_alarm_setup() {
 }
 
 extern "C" void user_alarm_arm_home() {
+    lastSystemActivityTime = millis();
     if (currentMode != ARMED_HOME && currentMode != ARMING_HOME) {
-        // Ready Check (checking all 8 zones, skipping bypassed ones)
+        // Ready Check (checking all 8 zones, skipping bypassed ones and motion sensor Zone 2)
         bool anyZoneOpen = false;
         for (int i = 0; i < 8; i++) {
+            if (i == 1) continue; // Ignore Zone 2 (motion sensor) for ready check
             if (sensors[i] && !zoneBypassed[i]) anyZoneOpen = true;
         }
         if (anyZoneOpen) {
@@ -292,7 +358,7 @@ extern "C" void user_alarm_arm_home() {
         memset(zoneAlarmMemory, 0, sizeof(zoneAlarmMemory));
         hasAlarmMemory = false;
 
-        currentMode = ARMING_HOME;
+        update_current_mode(ARMING_HOME);
         armingStartTime = millis();
         lastSecondsLeft = -1;
         
@@ -304,10 +370,12 @@ extern "C" void user_alarm_arm_home() {
 }
 
 extern "C" void user_alarm_arm_away() {
+    lastSystemActivityTime = millis();
     if (currentMode != ARMED_AWAY && currentMode != ARMING_AWAY) {
-        // Ready Check (checking all 8 zones, skipping bypassed ones)
+        // Ready Check (checking all 8 zones, skipping bypassed ones and motion sensor Zone 2)
         bool anyZoneOpen = false;
         for (int i = 0; i < 8; i++) {
+            if (i == 1) continue; // Ignore Zone 2 (motion sensor) for ready check
             if (sensors[i] && !zoneBypassed[i]) anyZoneOpen = true;
         }
         if (anyZoneOpen) {
@@ -320,7 +388,7 @@ extern "C" void user_alarm_arm_away() {
         memset(zoneAlarmMemory, 0, sizeof(zoneAlarmMemory));
         hasAlarmMemory = false;
 
-        currentMode = ARMING_AWAY;
+        update_current_mode(ARMING_AWAY);
         armingStartTime = millis();
         lastSecondsLeft = -1;
         
@@ -332,8 +400,9 @@ extern "C" void user_alarm_arm_away() {
 }
 
 extern "C" void user_alarm_disarm() { 
+    lastSystemActivityTime = millis();
     if (currentMode != DISARMED) {
-        currentMode = DISARMED;
+        update_current_mode(DISARMED);
  
         // Clear active beeps and buzzer
         dsc.beep(0);
@@ -363,6 +432,8 @@ extern "C" void user_alarm_loop() {
 
     // 2. Handle Keypad input
     if (dsc.key != 0xFF) {
+        lastKeypadActivityTime = millis();
+        dsc.lightBacklight = on;
         byte rawKey = dsc.key;
         dsc.key = 0xFF; // Clear buffer
         char key = decodeDscKey(rawKey);
@@ -398,6 +469,51 @@ extern "C" void user_alarm_loop() {
 
             Serial.printf("⌨️ [TECLADO DSC] Tecla presionada: [ %c ]\n", key);
             // (Keypad hardware automatically generates keypress audio feedback)
+
+            if (isWaitingForInstallerCode) {
+                if (key >= '0' && key <= '9') {
+                    keypadPinBuffer += key;
+                    Serial.printf("⌨️ [TECLADO DSC] Código Instalador: %s\n", keypadPinBuffer.c_str());
+                    if (keypadPinBuffer.length() == 4) {
+                        if (keypadPinBuffer == "5555") {
+                            isInstallerMode = true;
+                            Serial.println("🔑 [TECLADO DSC] Código correcto. Menú Instalador (*8): 9=Reiniciar, 2=Medidor RSSI, #=Salir.");
+                            dsc.beep(3);
+                        } else {
+                            Serial.println("❌ [TECLADO DSC] Código incorrecto!");
+                            dsc.beep(4);
+                        }
+                        keypadPinBuffer = "";
+                        isWaitingForInstallerCode = false;
+                    }
+                } else if (key == '#' || key == '*') {
+                    isWaitingForInstallerCode = false;
+                    keypadPinBuffer = "";
+                    Serial.println("⌨️ [TECLADO DSC] Cancelado.");
+                    dsc.beep(1);
+                }
+                return;
+            }
+            if (isInstallerMode) {
+                if (key == '9') {
+                    Serial.println("🔄 [TECLADO DSC] Reiniciando ESP32...");
+                    dsc.beep(2);
+                    vTaskDelay(pdMS_TO_TICKS(500));
+                    esp_restart();
+                } else if (key == '2') {
+                    isRssiMeterMode = !isRssiMeterMode;
+                    Serial.printf("⌨️ [TECLADO DSC] Medidor RSSI %s\n", isRssiMeterMode ? "ACTIVADO" : "DESACTIVADO");
+                    dsc.beep(isRssiMeterMode ? 3 : 1);
+                } else if (key == '#' || key == '*') {
+                    isInstallerMode = false;
+                    isRssiMeterMode = false;
+                    Serial.println("⌨️ [TECLADO DSC] Saliendo del menú de instalador.");
+                    dsc.beep(1);
+                } else {
+                    dsc.beep(4);
+                }
+                return;
+            }
 
             if (isBypassMode) {
                 if (key >= '1' && key <= '8') {
@@ -437,6 +553,22 @@ extern "C" void user_alarm_loop() {
                     dsc.beep(4);
                 }
             }
+            else if (isMacroMode) {
+                if (key >= '1' && key <= '9') {
+                    std::string macroPayload = "7" + std::string(1, key);
+                    if (mqttManager) {
+                        mqttManager->publish("home/alarm/keypad/macro", macroPayload, 0, false);
+                    }
+                    Serial.printf("🚀 [TECLADO DSC] Ejecutando Macro: %s\n", macroPayload.c_str());
+                    dsc.beep(2); // 2 confirmation chirps
+                    isMacroMode = false;
+                } else if (key == '#' || key == '*') {
+                    isMacroMode = false;
+                    Serial.println("⌨️ [TECLADO DSC] Saliendo de modo macro.");
+                } else {
+                    dsc.beep(4);
+                }
+            }
             else if (isCommandMode) {
                 if (key == '1') {
                     isBypassMode = true;
@@ -455,9 +587,12 @@ extern "C" void user_alarm_loop() {
                     } else {
                         dsc.beep(1); // 1 beep (since keypress already beeped, this gives total 2 or a second beep)
                     }
-                } else if (key == '7') {
+                } else if (key == '6') {
                     isSimulateMode = true;
-                    Serial.println("⌨️ [TECLADO DSC] Modo Simulación Activo (*7). Presione 1-8 para alternar sensor, # para salir.");
+                    Serial.println("⌨️ [TECLADO DSC] Modo Simulación Activo (*6). Presione 1-8 para alternar sensor, # para salir.");
+                } else if (key == '7') {
+                    isMacroMode = true;
+                    Serial.println("⌨️ [TECLADO DSC] Modo Macro Activo (*7). Presione 1-9 para ejecutar macro, # para salir.");
                 } else if (key == '0') {
                     Serial.println("⌨️ [TECLADO DSC] Armado rápido (*0)...");
                     if (currentMode == DISARMED) {
@@ -472,6 +607,10 @@ extern "C" void user_alarm_loop() {
                     } else {
                         dsc.beep(4);
                     }
+                } else if (key == '8') {
+                    isWaitingForInstallerCode = true;
+                    keypadPinBuffer = "";
+                    Serial.println("⌨️ [TECLADO DSC] Ingrese Código de Instalador de 4 dígitos...");
                 } else if (key == '#' || key == '*') {
                     Serial.println("⌨️ [TECLADO DSC] Cancelado.");
                 } else {
@@ -546,6 +685,7 @@ extern "C" void user_alarm_loop() {
             int reading = digitalRead(zone.pin);
             if (reading != zone.lastPinReading) {
                 zone.lastDebounceTime = millis();
+                zone.lastPinReading = reading;
             }
             if ((millis() - zone.lastDebounceTime) > DEBOUNCE_DELAY) {
                 bool isOpen = (reading == HIGH);
@@ -553,7 +693,6 @@ extern "C" void user_alarm_loop() {
                     trigger_zone_change(zone.sensorIndex, isOpen, "HARDWARE");
                 }
             }
-            zone.lastPinReading = reading;
         }
     }
  
@@ -562,11 +701,11 @@ extern "C" void user_alarm_loop() {
         unsigned long elapsed = millis() - armingStartTime;
         if (elapsed >= EXIT_DELAY_MS) {
             if (currentMode == ARMING_AWAY) {
-                currentMode = ARMED_AWAY;
+                update_current_mode(ARMED_AWAY);
                 mqtt_publish_state("armed_away");
                 Serial.println("\n🟠 [SISTEMA] !!! ALARMA ARMADA (AWAY) !!!");
             } else {
-                currentMode = ARMED_HOME;
+                update_current_mode(ARMED_HOME);
                 mqtt_publish_state("armed_home");
                 Serial.println("\n🏠 [SISTEMA] !!! ALARMA ARMADA (HOME) !!!");
             }
@@ -598,7 +737,7 @@ extern "C" void user_alarm_loop() {
     if (currentMode == ENTRY_DELAY) {
         unsigned long elapsed = millis() - entryDelayStartTime;
         if (elapsed >= ENTRY_DELAY_MS) {
-            currentMode = TRIGGERED;
+            update_current_mode(TRIGGERED);
             mqtt_publish_state("triggered");
             Serial.println("\n🔴🔴🔴 [ALERTA] TIEMPO DE ENTRADA AGOTADO - INTRUSION DETECTADA 🔴🔴🔴");
             dsc.buzzer(255); // Sound physical buzzer continuously for up to 255s
@@ -648,7 +787,29 @@ extern "C" void user_alarm_loop() {
     }
 
     // 8. Synchronize physical keypad LEDs with system state in real-time
-    if (isBypassMode) {
+    if (isRssiMeterMode) {
+        // Map RSSI level to 1-8 LEDs
+        int leds = 0;
+        if (WiFi.isConnected()) {
+            int32_t rssi = WiFi.RSSI();
+            if (rssi < -85) leds = 1;
+            else if (rssi < -80) leds = 2;
+            else if (rssi < -75) leds = 3;
+            else if (rssi < -70) leds = 4;
+            else if (rssi < -65) leds = 5;
+            else if (rssi < -60) leds = 6;
+            else if (rssi < -55) leds = 7;
+            else leds = 8;
+        }
+        dsc.lightZone1 = (leds >= 1) ? on : off;
+        dsc.lightZone2 = (leds >= 2) ? on : off;
+        dsc.lightZone3 = (leds >= 3) ? on : off;
+        dsc.lightZone4 = (leds >= 4) ? on : off;
+        dsc.lightZone5 = (leds >= 5) ? on : off;
+        dsc.lightZone6 = (leds >= 6) ? on : off;
+        dsc.lightZone7 = (leds >= 7) ? on : off;
+        dsc.lightZone8 = (leds >= 8) ? on : off;
+    } else if (isBypassMode) {
         // In bypass mode, zone LEDs show which zones are currently bypassed
         dsc.lightZone1 = zoneBypassed[0] ? on : off;
         dsc.lightZone2 = zoneBypassed[1] ? on : off;
@@ -669,11 +830,11 @@ extern "C" void user_alarm_loop() {
         dsc.lightZone7 = zoneAlarmMemory[6] ? on : off;
         dsc.lightZone8 = zoneAlarmMemory[7] ? on : off;
     } else if (isTroubleMode) {
-        // In trouble mode: Zone 1 = WiFi trouble, Zone 2 = NFC trouble
+        // In trouble mode: Zone 1 = WiFi, Zone 2 = NFC, Zone 3 = MQTT, Zone 4 = HomeKit
         dsc.lightZone1 = (!WiFi.isConnected()) ? on : off;
         dsc.lightZone2 = (nfcManager == nullptr) ? on : off;
-        dsc.lightZone3 = off;
-        dsc.lightZone4 = off;
+        dsc.lightZone3 = (!mqttManager || !mqttManager->isConnected()) ? on : off;
+        dsc.lightZone4 = (HAPClient::nAdminControllers() == 0) ? on : off;
         dsc.lightZone5 = off;
         dsc.lightZone6 = off;
         dsc.lightZone7 = off;
@@ -700,9 +861,10 @@ extern "C" void user_alarm_loop() {
         dsc.lightZone8 = off;
     }
 
-    // Ready LED Check (checking all 8 zones, skipping bypassed ones)
+    // Ready LED Check (checking all 8 zones, skipping bypassed ones and motion sensor Zone 2)
     bool anyReadyZoneOpen = false;
     for (int i = 0; i < 8; i++) {
+        if (i == 1) continue; // Ignore Zone 2 (motion sensor) for ready LED check
         if (sensors[i] && !zoneBypassed[i]) anyReadyZoneOpen = true;
     }
     dsc.lightReady = (currentMode == DISARMED && !anyReadyZoneOpen) ? on : off;
@@ -734,17 +896,66 @@ extern "C" void user_alarm_loop() {
         dsc.lightMemory = hasAlarmMemory ? on : off;
     }
 
-    // Trouble LED state
-    bool hasTrouble = (!WiFi.isConnected());
+    // Trouble LED state: active if WiFi or MQTT is offline
+    bool hasTrouble = (!WiFi.isConnected() || (!mqttManager || !mqttManager->isConnected()));
     if (isTroubleMode) {
         dsc.lightTrouble = blink;
     } else {
         dsc.lightTrouble = hasTrouble ? on : off;
     }
+
+    // Auto-Backlight Dimming (30-second timeout, only when DISARMED or ARMED)
+    if (currentMode == DISARMED || currentMode == ARMED_AWAY || currentMode == ARMED_HOME) {
+        if (millis() - lastKeypadActivityTime > 30000) {
+            dsc.lightBacklight = off;
+        }
+    } else {
+        // Keep backlight active during exit delay, entry delay, and triggered states
+        dsc.lightBacklight = on;
+    }
+
+    // Auto-Protect (No-Motion Auto-Arming)
+    auto& miscConfig = configManager->getConfig<espConfig::misc_config_t>();
+    if (currentMode == DISARMED && miscConfig.autoArmEnabled) {
+        unsigned long elapsed = millis() - lastSystemActivityTime;
+        unsigned long timeoutMs = (unsigned long)miscConfig.autoArmTimeoutMins * 60000;
+        if (elapsed >= timeoutMs) {
+            // Ready Check (checking all 8 zones, skipping bypassed ones and motion sensor Zone 2)
+            bool anyZoneOpen = false;
+            for (int i = 0; i < 8; i++) {
+                if (i == 1) continue; // Ignore Zone 2 (motion sensor) for ready check
+                if (sensors[i] && !zoneBypassed[i]) anyZoneOpen = true;
+            }
+
+            lastSystemActivityTime = millis(); // Reset to wait next timeout if arming fails/succeeds
+
+            if (anyZoneOpen) {
+                Serial.println("\n⚠️ [AUTO-PROTECT] No se puede auto-armar: Zonas abiertas.");
+                dsc.beep(4); // Play error chirp
+            } else {
+                Serial.printf("🕒 [AUTO-PROTECT] Inactividad detectada (%lu mins). Auto-armado instantáneo con chirp...\n", (unsigned long)miscConfig.autoArmTimeoutMins);
+                
+                // Clear alarm memory on arming
+                memset(zoneAlarmMemory, 0, sizeof(zoneAlarmMemory));
+                hasAlarmMemory = false;
+
+                if (miscConfig.autoArmMode == 0) {
+                    update_current_mode(ARMED_HOME);
+                    mqtt_publish_state("armed_home");
+                } else {
+                    update_current_mode(ARMED_AWAY);
+                    mqtt_publish_state("armed_away");
+                }
+                dsc.beep(1); // Play single confirmation chirp
+                print_status();
+            }
+        }
+    }
 }
 
 extern "C" void user_alarm_failed_tap() { 
     Serial.println("NFC Fail"); 
+    lastSystemActivityTime = millis();
     // Play warning tone pattern on keypad to indicate failed tap
     dsc.beep(4); 
 }

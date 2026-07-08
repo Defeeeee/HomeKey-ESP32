@@ -10,6 +10,7 @@
   import { websocketState } from '$lib/stores/websocket.svelte';
   import type { LogEntry } from '$lib/types/api';
   import { logIdIncrement, logs } from '$lib/stores/logs.svelte';
+  import { processZoneStateChange } from '$lib/stores/diagnostics.svelte.js';
   import { route } from 'sv-router/generated';
 
 	let { children } = $props();
@@ -58,6 +59,9 @@
 					const data = event.data;
 					if (data.type === 'sysinfo' || data.type === 'metrics') {
 						updateSystemInfo(data);
+					}
+					if (data.alarm_zones) {
+						processZoneStateChange(data.alarm_zones);
 					}
           if (data.type === 'log') {
 						const log : LogEntry = {

@@ -92,6 +92,7 @@ private:
     AppEventLoop::SubscriptionHandle m_target_state_event;
     AppEventLoop::SubscriptionHandle m_update_state_event;
     AppEventLoop::SubscriptionHandle m_nfc_event;
+    AppEventLoop::SubscriptionHandle m_alarm_state_event;
 
     esp_timer_handle_t momentaryStateTimer = nullptr;
 

@@ -111,6 +111,9 @@ ConfigManager::ConfigManager() : m_isInitialized(false) {
       {"ethRmiiConfig", &m_miscConfig.ethRmiiConfig},
       {"ethSpiConfig", &m_miscConfig.ethSpiConfig},
       {"logLevel", &m_miscConfig.logLevel},
+      {"autoArmEnabled", &m_miscConfig.autoArmEnabled},
+      {"autoArmTimeoutMins", &m_miscConfig.autoArmTimeoutMins},
+      {"autoArmMode", &m_miscConfig.autoArmMode},
       {"armedHomeZones", &m_miscConfig.armedHomeZones},
       {"dscClockPin", &m_miscConfig.dscClockPin},
       {"dscReadPin", &m_miscConfig.dscReadPin},
@@ -217,6 +220,9 @@ bool ConfigManager::begin() {
   loadConfigFromNvs("MQTTSSLDATA");
   loadConfigFromNvs("MISCDATA");
   loadConfigFromNvs("HTTPSDATA");
+
+  // Force LWT topic to be home/alarm/status for HA alarm panel integration
+  m_mqttConfig.lwtTopic = "home/alarm/status";
 
   ESP_LOGI(TAG, "Initialization complete.");
   return true;

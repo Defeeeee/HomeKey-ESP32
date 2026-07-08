@@ -5,20 +5,7 @@
    * @param {import('../types/api').NotificationType} type
    * @returns {string}
    */
-  function getAlertClass(type) {
-    switch (type) {
-      case "success":
-        return "alert-success";
-      case "error":
-        return "alert-error";
-      case "warning":
-        return "alert-warning";
-      case "info":
-        return "alert-info";
-      default:
-        return "alert-info";
-    }
-  }
+  const getAlertClass = (type) => `alert-${type || 'info'}`;
 </script>
 
 <div
