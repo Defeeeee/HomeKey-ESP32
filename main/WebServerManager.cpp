@@ -484,7 +484,7 @@ esp_err_t WebServerManager::handleStaticFiles(httpd_req_t *req) {
       httpd_resp_send_chunk(req, NULL, 0);
       return ESP_FAIL;
     }
-    taskYIELD();
+    vTaskDelay(pdMS_TO_TICKS(5));
   }
   file.close();
   httpd_resp_send_chunk(req, NULL, 0);
@@ -521,7 +521,7 @@ esp_err_t WebServerManager::handleRootOrHash(httpd_req_t *req) {
   }
   httpd_resp_set_type(req, "text/html");
   httpd_resp_set_hdr(req, "Connection", "close");
-  httpd_resp_set_hdr(req, "Cache-Control", "max-age=86400");
+  httpd_resp_set_hdr(req, "Cache-Control", "no-store, no-cache, must-revalidate");
   httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
 
   char buffer[1024];

@@ -203,8 +203,8 @@ namespace espConfig
     uint8_t zonePin2 = 17;
     uint8_t zonePin3 = 14;
     uint8_t zonePin4 = 25;
-    uint8_t zonePin5 = 26;
-    uint8_t zonePin6 = 27;
+    uint8_t zonePin5 = 27; // Physical Pin 27 for Zone 5
+    uint8_t zonePin6 = 255;
     uint8_t zonePin7 = 32;
     uint8_t zonePin8 = 255;
     bool zoneDisabled1 = false;

@@ -1,6 +1,5 @@
 <script lang="ts">
 	import type { EthConfig, NfcGpioPinsPreset } from '$lib/types/api';
-	import SpiEthernetNote from './SpiEthernetNote.svelte';
 	import { route } from 'sv-router/generated';
 
 	interface Props {
@@ -91,7 +90,17 @@
 
 <div class="space-y-4">
   {#if ethernetEnabled && !currentEthChip()?.emac}
-    <SpiEthernetNote spiNumBuses={ethConfig?.numSpiBuses ?? 1} selectedBus={ethSpiBus} />
+    <div class="alert alert-warning alert-sm mb-2">
+      <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 shrink-0 stroke-current" fill="none" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+      </svg>
+      <span class="text-xs">
+        Note: {(ethConfig?.numSpiBuses ?? 1) == 1 ? "Only one SPI bus available" : "Two SPI buses available"} and Ethernet is assigned to the
+        {ethSpiBus === 1 ? "first (SPI2) bus." : "second (SPI3) bus."}
+        <br />
+        Ensure that the PN532 pins {ethSpiBus === 1 ? "(except CS/SS) match" : "do not conflict with"} the Ethernet pins as they will {ethSpiBus === 1 ? "share the same bus." : "be initialized on separate buses."}
+      </span>
+    </div>
   {/if}
 	<!-- NFC Reader -->
 	<div class="py-2 px-3 bg-base-100 rounded-lg">

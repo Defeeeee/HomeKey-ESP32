@@ -8,6 +8,7 @@
 #include "JsonGuard.hpp"
 #include <cstdlib>
 #include <esp_log.h>
+#include <esp_system.h>
 #include <esp_app_desc.h>
 #include "eventStructs.hpp"
 #include <string>
@@ -344,6 +345,25 @@ void MqttManager::onConnected() {
 
     publish(m_mqttConfig.lwtTopic, "online", 1, true);
 
+    // Publish ESP32 Reset Reason
+    esp_reset_reason_t reason = esp_reset_reason();
+    const char* reason_str = "UNKNOWN";
+    switch (reason) {
+        case ESP_RST_POWERON:   reason_str = "POWERON"; break;
+        case ESP_RST_EXT:       reason_str = "EXT"; break;
+        case ESP_RST_SW:        reason_str = "SW"; break;
+        case ESP_RST_PANIC:     reason_str = "PANIC"; break;
+        case ESP_RST_INT_WDT:   reason_str = "INT_WDT"; break;
+        case ESP_RST_TASK_WDT:  reason_str = "TASK_WDT"; break;
+        case ESP_RST_WDT:       reason_str = "WDT"; break;
+        case ESP_RST_DEEPSLEEP: reason_str = "DEEPSLEEP"; break;
+        case ESP_RST_BROWNOUT:  reason_str = "BROWNOUT"; break;
+        case ESP_RST_SDIO:      reason_str = "SDIO"; break;
+        default:                reason_str = "UNKNOWN"; break;
+    }
+    publish("home/alarm/reset_reason", reason_str, 0, true);
+    ESP_LOGI(TAG, "Published ESP32 reset reason: %s", reason_str);
+
     // Sync current Alarm State to Home Assistant
     const char* rawAlarmState = user_alarm_get_state_string();
     std::string alarmState = rawAlarmState;
@@ -411,6 +431,7 @@ void MqttManager::onData(const std::string& topic, const std::string& data) {
     };
     std::array<uint8_t, sizeof(EventLockState)> d{};
     
+
         if (topic == "home/alarm/set") {
             AppEventLoop::publish(ALARM_EVENT, ALARM_SET_REMOTE, (const uint8_t*)data.c_str(), data.length());
             ESP_LOGI("MQTT_ALARM", "Comando remoto recibido: %s", data.c_str());

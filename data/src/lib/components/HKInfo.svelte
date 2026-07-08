@@ -3,7 +3,7 @@
   import { systemInfo, updateSystemInfo } from "$lib/stores/system.svelte.js";
   import { calculateWifiSignal } from "$lib/utils/wifi.js";
   import ws from '$lib/services/ws.js';
-  import { onMount, onDestroy } from "svelte";
+  import { onMount, onDestroy, untrack } from "svelte";
   import { logs, logIdIncrement } from "$lib/stores/logs.svelte";
   const version: string = __DEV__ ? "dev" : __VERSION__;
 
@@ -413,7 +413,7 @@
           text: 'text-amber-300 font-bold',
           iconColor: 'text-amber-300',
           label: 'ENTRY DELAY',
-          desc: 'Entry door opened! Tap Apple HomeKey or Disarm system.'
+          desc: 'Entry door opened! Tap HomeKey or Disarm.'
         };
       case 'triggered':
         return {
@@ -422,7 +422,7 @@
           text: 'text-rose-400 font-black',
           iconColor: 'text-rose-400',
           label: 'ALARM TRIGGERED',
-          desc: '🚨 INTRUSION BREACH DETECTED! Siren is active!'
+          desc: '🚨 INTRUSION BREACH! Siren active!'
         };
       default:
         return {
@@ -431,10 +431,75 @@
           text: 'text-slate-400',
           iconColor: 'text-slate-400',
           label: 'OFFLINE',
-          desc: 'Security state connection is unestablished.'
+          desc: 'Connection offline.'
         };
     }
   };
+
+  let heapHistory = $state<number[]>([]);
+  let rssiHistory = $state<number[]>([]);
+
+  $effect(() => {
+    const heap = systemInfo.free_heap;
+    if (heap > 0) {
+      untrack(() => {
+        if (heapHistory.length === 0 || heapHistory[heapHistory.length - 1] !== heap) {
+          heapHistory = [...heapHistory, heap];
+          if (heapHistory.length > 20) heapHistory.shift();
+        }
+      });
+    }
+  });
+
+  $effect(() => {
+    const rssi = systemInfo.wifi_rssi;
+    if (rssi !== 0) {
+      untrack(() => {
+        if (rssiHistory.length === 0 || rssiHistory[rssiHistory.length - 1] !== rssi) {
+          rssiHistory = [...rssiHistory, rssi];
+          if (rssiHistory.length > 20) rssiHistory.shift();
+        }
+      });
+    }
+  });
+
+  let heapPathData = $derived.by(() => {
+    if (heapHistory.length < 2) return { line: '', area: '', lastX: 0, lastY: 0, min: 0, max: 0 };
+    const min = Math.min(...heapHistory);
+    const max = Math.max(...heapHistory);
+    const range = max - min || 1;
+
+    const points = heapHistory.map((val, i) => {
+      const x = (i / (heapHistory.length - 1)) * 100;
+      const y = 35 - ((val - min) / range) * 25;
+      return { x, y };
+    });
+
+    const line = 'M ' + points.map(p => `${p.x} ${p.y}`).join(' L ');
+    const area = line + ` L 100 40 L 0 40 Z`;
+    const last = points[points.length - 1];
+
+    return { line, area, lastX: last.x, lastY: last.y, min, max };
+  });
+
+  let rssiPathData = $derived.by(() => {
+    if (rssiHistory.length < 2) return { line: '', area: '', lastX: 0, lastY: 0, min: 0, max: 0 };
+    const min = Math.min(...rssiHistory);
+    const max = Math.max(...rssiHistory);
+    const range = max - min || 1;
+
+    const points = rssiHistory.map((val, i) => {
+      const x = (i / (rssiHistory.length - 1)) * 100;
+      const y = 35 - ((val - min) / range) * 25;
+      return { x, y };
+    });
+
+    const line = 'M ' + points.map(p => `${p.x} ${p.y}`).join(' L ');
+    const area = line + ` L 100 40 L 0 40 Z`;
+    const last = points[points.length - 1];
+
+    return { line, area, lastX: last.x, lastY: last.y, min, max };
+  });
 
   let stateStyles = $derived(getAlarmStateStyles(alarm_state));
 </script>
@@ -447,6 +512,7 @@
         Real-time status monitoring, zone breaches, and alarm keypad.
       </p>
     </div>
+    {#if __DEV__}
     <div class="flex items-center gap-2">
       <button 
         onclick={toggleSimMode} 
@@ -456,9 +522,10 @@
         {isSimMode ? 'Simulation Active' : 'Start Simulation'}
       </button>
     </div>
+    {/if}
   </div>
 
-  {#if isSimMode}
+  {#if __DEV__ && isSimMode}
     <div class="mb-6 bg-[#8b5cf6]/10 border border-[#8b5cf6]/30 rounded-2xl p-4 text-sm text-slate-300 flex gap-3 items-start animate-fade-in relative overflow-hidden">
       <div class="absolute inset-0 bg-gradient-to-r from-[#8b5cf6]/5 to-transparent pointer-events-none"></div>
       <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="size-5 text-[#a855f7] flex-shrink-0 mt-0.5">
@@ -466,7 +533,7 @@
       </svg>
       <div>
         <p class="font-bold text-[#a855f7]">Offline Simulation Active</p>
-        <p class="text-xs opacity-90 mt-1">You can click on the <b>Security Zones</b> cards on the right to simulate sensor openings/closings. Arm or Disarm the system to test exit/entry delay states with simulated warning beeps & siren sound effects.</p>
+        <p class="text-xs opacity-90 mt-1">Click on zone cards to simulate triggers. Arm/disarm to test exits & siren effects.</p>
       </div>
     </div>
   {/if}
@@ -789,6 +856,68 @@
             <span class="text-xs text-slate-300 font-medium">MQTT broker</span>
             <span class="text-xs font-bold" class:text-emerald-400={systemInfo?.mqtt_connected} class:text-rose-450={!systemInfo?.mqtt_connected}>{systemInfo?.mqtt_connected ? "Connected" : "Disconnected"}</span>
           </div>
+        </div>
+
+        <div class="mt-4 border-t border-white/5 pt-4 space-y-4">
+          <!-- Heap Memory Graph -->
+          <div>
+            <div class="flex justify-between items-center mb-1.5 text-[10px]">
+              <span class="text-slate-400 font-medium">Heap Memory Stability</span>
+              <span class="text-slate-400 font-mono">
+                Min: {heapPathData.min.toLocaleString()} | Max: {heapPathData.max.toLocaleString()} B
+              </span>
+            </div>
+            <div class="h-16 w-full bg-[#07060f]/60 rounded-xl border border-white/5 relative overflow-hidden p-1">
+              {#if heapHistory.length >= 2}
+                <svg viewBox="0 0 100 40" class="w-full h-full overflow-visible" preserveAspectRatio="none">
+                  <defs>
+                    <linearGradient id="heap-grad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.25"/>
+                      <stop offset="100%" stop-color="#38bdf8" stop-opacity="0.0"/>
+                    </linearGradient>
+                  </defs>
+                  <path d={heapPathData.area} fill="url(#heap-grad)" />
+                  <path d={heapPathData.line} fill="none" stroke="#38bdf8" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+                  <circle cx={heapPathData.lastX} cy={heapPathData.lastY} r="1.5" fill="#38bdf8" class="animate-pulse" />
+                </svg>
+              {:else}
+                <div class="flex items-center justify-center h-full text-[10px] text-slate-500">
+                  Gathering heap statistics...
+                </div>
+              {/if}
+            </div>
+          </div>
+
+          <!-- WiFi RSSI Graph -->
+          {#if !systemInfo?.eth_enabled}
+            <div>
+              <div class="flex justify-between items-center mb-1.5 text-[10px]">
+                <span class="text-slate-400 font-medium">Wi-Fi Signal Strength (RSSI)</span>
+                <span class="text-slate-400 font-mono">
+                  Min: {rssiPathData.min} | Max: {rssiPathData.max} dBm
+                </span>
+              </div>
+              <div class="h-16 w-full bg-[#07060f]/60 rounded-xl border border-white/5 relative overflow-hidden p-1">
+                {#if rssiHistory.length >= 2}
+                  <svg viewBox="0 0 100 40" class="w-full h-full overflow-visible" preserveAspectRatio="none">
+                    <defs>
+                      <linearGradient id="rssi-grad" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stop-color="#10b981" stop-opacity="0.25"/>
+                        <stop offset="100%" stop-color="#10b981" stop-opacity="0.0"/>
+                      </linearGradient>
+                    </defs>
+                    <path d={rssiPathData.area} fill="url(#rssi-grad)" />
+                    <path d={rssiPathData.line} fill="none" stroke="#10b981" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+                    <circle cx={rssiPathData.lastX} cy={rssiPathData.lastY} r="1.5" fill="#10b981" class="animate-pulse" />
+                  </svg>
+                {:else}
+                  <div class="flex items-center justify-center h-full text-[10px] text-slate-500">
+                    Gathering RSSI statistics...
+                  </div>
+                {/if}
+              </div>
+            </div>
+          {/if}
         </div>
       </div>
     </div>
