@@ -128,7 +128,7 @@ graph TD
 ## 📂 Firmware Project Directory Structure
 
 ```
-alarma-homekey-arduino/
+HomeKey-ESP32/
 ├── main/                       # Core ESP-IDF / C++ application source
 │   ├── main.cpp                # System Entrypoint & manager startup
 │   ├── user_alarm.cpp          # Core Alarm State Machine & Zone Matrix
@@ -144,11 +144,15 @@ alarma-homekey-arduino/
 │       ├── config.hpp          # Persistent storage structs
 │       └── defaults.h          # Hardcoded fallbacks & GPIO presets
 ├── components/                 # Git submodules & libraries
-│   ├── HK-HomeKit-Lib/         # Under-the-hood Apple HomeKey cryptographic engine
+│   ├── DigitalDoorKey/         # Apple HomeKey cryptographic engine
 │   ├── HomeSpan/               # HomeKit Accessory Protocol (HAP) engine
-│   └── PN532/                  # NFC chip drivers
+│   ├── dscKeybusInterface/     # DSC PowerSeries Keybus protocol driver
+│   ├── pn532_cxx/ pn532_hal/   # PN532 NFC chip drivers (SPI/I2C)
+│   ├── pn7160/                 # PN7160 NFC chip driver
+│   └── msgpack-c/ loggable*/   # Serialization & logging helpers
 ├── data/                       # Svelte 5 Web interface build files
-└── docs/                       # Project static pages (Hugo site source)
+├── docs/                       # Project static pages (Hugo site source)
+└── tools/arduino_uno_test/     # Standalone Arduino sketch to simulate zone sensors for bench testing
 ```
 
 ---
@@ -164,6 +168,8 @@ alarma-homekey-arduino/
 ### 2. Wiring Connections
 
 #### NFC Module (PN532 SPI)
+NFC GPIOs are **fully configurable from the Web UI** (or via a board preset, e.g. `CASmo-NFC`, `CASmo-NFC-MB-ETH`, `@lollokara's board`) — the table below is just an example wiring, not a fixed pinout:
+
 | PN532 Pin | ESP32 GPIO | Description |
 |-----------|------------|-------------|
 | VCC       | 5V / 3.3V  | Power |
@@ -172,6 +178,8 @@ alarma-homekey-arduino/
 | MISO      | GPIO 12    | SPI Master In Slave Out |
 | MOSI      | GPIO 13    | SPI Master Out Slave In |
 | SS/CS     | GPIO 15    | SPI Chip Select |
+
+> ⚠️ GPIO 13 and 14 above overlap with the example Zone 1 / Zone 3 pins in the table further down. If you're wiring both the NFC reader and physical zones, pick a preset/GPIO combo with no overlap (both the NFC pins and the zone pins can be reassigned from the Web UI).
 
 #### DSC Keypad Keybus
 Connection requires interfacing with the keypad's green (data out) and yellow (clock) lines. Use level-shifting transistors or resistor dividers if stepping down from the DSC 12V logic levels to ESP32 3.3V logic.
@@ -213,10 +221,10 @@ idf.py -p /dev/ttyUSB0 flash monitor
 
 ## 📱 Companion Mobile App (`vector-security-app`)
 
-The companion mobile app is stored in the `vector-security-app` workspace. It works side-by-side with the ESP32 through Home Assistant.
+The companion mobile app (React Native + Expo) is maintained as a **separate project**, not part of this repository. It talks to the alarm exclusively through Home Assistant's WebSocket API (via MQTT autodiscovery), so any Home Assistant-compatible frontend or automation can be used in its place.
 
 ### How to Install and Run:
-1.  Navigate to `/Users/defeee/PycharmProjects/app-alarma/vector-security-app`.
+1.  Clone the `vector-security-app` repository to your machine.
 2.  Install dependencies:
     ```bash
     npm install
