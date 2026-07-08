@@ -40,7 +40,7 @@ ZoneConfig physicalZones[8] = {
 
 const unsigned long DEBOUNCE_DELAY = 50; // ms
 unsigned long lastSamplingTime = 0;
-const unsigned long SAMPLING_INTERVAL = 200; // Muestreo cada 200ms
+const unsigned long SAMPLING_INTERVAL = 20; // Muestreo cada 20ms
 bool sensors[8] = {false, false, false, false, false, false, false, false};
 AppEventLoop::SubscriptionHandle m_remote_event;
 
@@ -69,6 +69,7 @@ bool isSimulateMode = false;
 bool isWaitingForInstallerCode = false;
 bool isInstallerMode = false;
 bool isRssiMeterMode = false;
+bool isMacroMode = false;
 unsigned long lastKeypadActivityTime = 0;
 unsigned long lastSystemActivityTime = 0;
 
@@ -157,7 +158,7 @@ void trigger_zone_change(int zoneIdx, bool isOpen, const char* sourceName) {
     
     sensors[zoneIdx] = isOpen;
     int zoneId = zoneIdx + 1;
-    if (mqttManager) mqttManager->publishSensorState(zoneId, isOpen);
+    if (mqttManager && strcmp(sourceName, "MQTT-RF") != 0) mqttManager->publishSensorState(zoneId, isOpen);
     Serial.printf("⚡ [%s] Cambio en Zona %d: %s\n", sourceName, zoneId, isOpen ? "OPEN" : "CLOSED");
     broadcast_ui_update();
 
@@ -243,6 +244,12 @@ extern "C" bool user_alarm_get_sensor_state(int id) {
         return sensors[id - 1];
     }
     return false;
+}
+
+extern "C" void user_alarm_set_sensor_state(int id, bool isOpen) {
+    if (id >= 1 && id <= 8) {
+        trigger_zone_change(id - 1, isOpen, "MQTT-RF");
+    }
 }
 
 void print_status() {
@@ -546,6 +553,22 @@ extern "C" void user_alarm_loop() {
                     dsc.beep(4);
                 }
             }
+            else if (isMacroMode) {
+                if (key >= '1' && key <= '9') {
+                    std::string macroPayload = "7" + std::string(1, key);
+                    if (mqttManager) {
+                        mqttManager->publish("home/alarm/keypad/macro", macroPayload, 0, false);
+                    }
+                    Serial.printf("🚀 [TECLADO DSC] Ejecutando Macro: %s\n", macroPayload.c_str());
+                    dsc.beep(2); // 2 confirmation chirps
+                    isMacroMode = false;
+                } else if (key == '#' || key == '*') {
+                    isMacroMode = false;
+                    Serial.println("⌨️ [TECLADO DSC] Saliendo de modo macro.");
+                } else {
+                    dsc.beep(4);
+                }
+            }
             else if (isCommandMode) {
                 if (key == '1') {
                     isBypassMode = true;
@@ -564,9 +587,12 @@ extern "C" void user_alarm_loop() {
                     } else {
                         dsc.beep(1); // 1 beep (since keypress already beeped, this gives total 2 or a second beep)
                     }
-                } else if (key == '7') {
+                } else if (key == '6') {
                     isSimulateMode = true;
-                    Serial.println("⌨️ [TECLADO DSC] Modo Simulación Activo (*7). Presione 1-8 para alternar sensor, # para salir.");
+                    Serial.println("⌨️ [TECLADO DSC] Modo Simulación Activo (*6). Presione 1-8 para alternar sensor, # para salir.");
+                } else if (key == '7') {
+                    isMacroMode = true;
+                    Serial.println("⌨️ [TECLADO DSC] Modo Macro Activo (*7). Presione 1-9 para ejecutar macro, # para salir.");
                 } else if (key == '0') {
                     Serial.println("⌨️ [TECLADO DSC] Armado rápido (*0)...");
                     if (currentMode == DISARMED) {
@@ -659,6 +685,7 @@ extern "C" void user_alarm_loop() {
             int reading = digitalRead(zone.pin);
             if (reading != zone.lastPinReading) {
                 zone.lastDebounceTime = millis();
+                zone.lastPinReading = reading;
             }
             if ((millis() - zone.lastDebounceTime) > DEBOUNCE_DELAY) {
                 bool isOpen = (reading == HIGH);
@@ -666,7 +693,6 @@ extern "C" void user_alarm_loop() {
                     trigger_zone_change(zone.sensorIndex, isOpen, "HARDWARE");
                 }
             }
-            zone.lastPinReading = reading;
         }
     }
  
