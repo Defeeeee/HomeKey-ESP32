@@ -644,7 +644,17 @@ extern "C" void user_alarm_loop() {
             } 
             else {
                 // Normal Mode (PIN Code entry & Quick Arming)
-                if (key >= '0' && key <= '9') {
+                if (key == '0' && keypadPinBuffer.length() == 0) {
+                    bool newSirenState = !user_alarm_is_siren_testing();
+                    user_alarm_siren_test(newSirenState);
+                    Serial.printf("📢 [TECLADO DSC] Tecla '0' -> Sirena %s\n", newSirenState ? "ACTIVADA" : "DESACTIVADA");
+                    if (newSirenState) {
+                        dsc.beep(3);
+                    } else {
+                        dsc.beep(1);
+                    }
+                }
+                else if (key >= '0' && key <= '9') {
                     keypadPinBuffer += key;
                     Serial.printf("⌨️ [TECLADO DSC] PIN Buffer: %s\n", keypadPinBuffer.c_str());
                     
