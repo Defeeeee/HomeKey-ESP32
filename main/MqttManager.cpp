@@ -1,11 +1,14 @@
+#include "app_events.hpp"
 #include "fmt/ranges.h"
 #include "config.hpp"
 #include "MqttManager.hpp"
+#include "include/user_alarm.h"
 #include "LockManager.hpp"
 #include "ConfigManager.hpp"
 #include "JsonGuard.hpp"
 #include <cstdlib>
 #include <esp_log.h>
+#include <esp_system.h>
 #include <esp_app_desc.h>
 #include "eventStructs.hpp"
 #include <string>
@@ -123,6 +126,15 @@ bool MqttManager::begin(std::string deviceID) {
           break;
       }
     });
+    
+    m_alarm_event = AppEventLoop::subscribe(ALARM_EVENT, ALARM_STATE_CHANGED, [&](const uint8_t* data, size_t size){
+      if(size == 0 || data == nullptr) return;
+      std::string state(reinterpret_cast<const char*>(data), size);
+            publish("home/alarm/state", state, 0, true);
+      ESP_LOGI("MQTT_DEBUG", ">> ENVIADO A HA: topic=home/alarm/state payload=%s", state.c_str());
+      Serial.printf(">>> [MQTT DEBUG] Publicado %s en home/alarm/state <<<\n", state.c_str());
+    });
+
     this->deviceID = deviceID;
 
     esp_mqtt_client_config_t mqtt_cfg = {};
@@ -152,6 +164,7 @@ bool MqttManager::begin(std::string deviceID) {
     mqtt_cfg.session.last_will.msg_len = 7;
     mqtt_cfg.session.last_will.retain = true;
     mqtt_cfg.session.last_will.qos = 1;
+    mqtt_cfg.session.keepalive = 60;
 
     m_client = esp_mqtt_client_init(&mqtt_cfg);
     if (!m_client) {
@@ -228,6 +241,8 @@ void MqttManager::onMqttEvent(esp_event_base_t base, int32_t event_id, void* eve
 
     switch (event->event_id) {
         case MQTT_EVENT_CONNECTED:
+        esp_mqtt_client_subscribe(m_client, "home/alarm/set", 0);
+        esp_mqtt_client_subscribe(m_client, "home/alarm/zone/+/bypass/set", 0);
             ESP_LOGI(TAG, "MQTT_EVENT_CONNECTED: Connection established successfully");
             m_isConnected = true;
             publishMqttStatus(true, MqttErrorCode::NONE);
@@ -330,6 +345,48 @@ void MqttManager::onConnected() {
 
     publish(m_mqttConfig.lwtTopic, "online", 1, true);
 
+    // Publish ESP32 Reset Reason
+    esp_reset_reason_t reason = esp_reset_reason();
+    const char* reason_str = "UNKNOWN";
+    switch (reason) {
+        case ESP_RST_POWERON:   reason_str = "POWERON"; break;
+        case ESP_RST_EXT:       reason_str = "EXT"; break;
+        case ESP_RST_SW:        reason_str = "SW"; break;
+        case ESP_RST_PANIC:     reason_str = "PANIC"; break;
+        case ESP_RST_INT_WDT:   reason_str = "INT_WDT"; break;
+        case ESP_RST_TASK_WDT:  reason_str = "TASK_WDT"; break;
+        case ESP_RST_WDT:       reason_str = "WDT"; break;
+        case ESP_RST_DEEPSLEEP: reason_str = "DEEPSLEEP"; break;
+        case ESP_RST_BROWNOUT:  reason_str = "BROWNOUT"; break;
+        case ESP_RST_SDIO:      reason_str = "SDIO"; break;
+        default:                reason_str = "UNKNOWN"; break;
+    }
+    publish("home/alarm/reset_reason", reason_str, 0, true);
+    ESP_LOGI(TAG, "Published ESP32 reset reason: %s", reason_str);
+
+    // Sync current Alarm State to Home Assistant
+    const char* rawAlarmState = user_alarm_get_state_string();
+    std::string alarmState = rawAlarmState;
+    if (alarmState == "arming_away" || alarmState == "arming_home") {
+        alarmState = "arming";
+    }
+    publish("home/alarm/state", alarmState, 0, true);
+    ESP_LOGI(TAG, "Synced alarm state to Home Assistant: %s", alarmState.c_str());
+
+    // Sync all 8 Zone Sensors and Bypass Switches states to Home Assistant
+    for (int i = 0; i < 8; i++) {
+        // Publish Sensor State
+        bool isOpen = user_alarm_get_sensor_state(i + 1);
+        std::string sensorTopic = "home/alarm/sensor/" + std::to_string(i + 1);
+        publish(sensorTopic, isOpen ? "OPEN" : "CLOSED", 0, true);
+
+        // Publish Bypass State
+        bool isBypassed = user_alarm_is_zone_bypassed(i);
+        std::string bypassTopic = "home/alarm/zone/" + std::to_string(i + 1) + "/bypass/state";
+        publish(bypassTopic, isBypassed ? "ON" : "OFF", 0, true);
+    }
+    ESP_LOGI(TAG, "Synced all zone sensors and bypass states to Home Assistant.");
+
     int ret;
     ret = esp_mqtt_client_subscribe(m_client, m_mqttConfig.lockStateCmd.c_str(), 0);
     if (ret < 0) ESP_LOGW(TAG, "Failed to subscribe to lockStateCmd");
@@ -343,6 +400,8 @@ void MqttManager::onConnected() {
         ret = esp_mqtt_client_subscribe(m_client, m_mqttConfig.lockCustomStateCmd.c_str(), 0);
         if (ret < 0) ESP_LOGW(TAG, "Failed to subscribe to lockCustomStateCmd");
     }
+    ret = esp_mqtt_client_subscribe(m_client, "home/alarm/zone/+/bypass/set", 0);
+    if (ret < 0) ESP_LOGW(TAG, "Failed to subscribe to zone bypass topic");
 
     if (m_mqttConfig.hassMqttDiscoveryEnabled) {
         publishHassDiscovery();
@@ -371,7 +430,27 @@ void MqttManager::onData(const std::string& topic, const std::string& data) {
     .source = LockManager::MQTT
     };
     std::array<uint8_t, sizeof(EventLockState)> d{};
-    if (topic == m_mqttConfig.lockStateCmd) {
+    
+
+        if (topic == "home/alarm/set") {
+            AppEventLoop::publish(ALARM_EVENT, ALARM_SET_REMOTE, (const uint8_t*)data.c_str(), data.length());
+            ESP_LOGI("MQTT_ALARM", "Comando remoto recibido: %s", data.c_str());
+            return;
+        }
+        if (topic.rfind("home/alarm/zone/", 0) == 0 && topic.length() > strlen("home/alarm/zone/") + strlen("/bypass/set")) {
+            size_t suffix_pos = topic.find("/bypass/set");
+            if (suffix_pos != std::string::npos && suffix_pos == topic.length() - strlen("/bypass/set")) {
+                size_t start = strlen("home/alarm/zone/");
+                std::string zoneStr = topic.substr(start, suffix_pos - start);
+                int zoneId = std::atoi(zoneStr.c_str());
+                if (zoneId >= 1 && zoneId <= 8) {
+                    bool bypass = (data == "ON" || data == "true" || data == "1");
+                    user_alarm_set_zone_bypass(zoneId - 1, bypass);
+                }
+                return;
+            }
+        }
+        if (topic == m_mqttConfig.lockStateCmd) {
       uint8_t v; if (!to_u8(data, v)) { ESP_LOGW(TAG, "Invalid lockStateCmd payload: %s", data.c_str()); return; }
       s.currentState = v;
       s.targetState = v;
@@ -451,6 +530,13 @@ void MqttManager::onData(const std::string& topic, const std::string& data) {
  * @param targetState Numeric code representing the lock's target state.
  */
 
+
+void MqttManager::publishSensorState(uint8_t id, bool isOpen) {
+    if (!m_isConnected) return;
+    std::string topic = "home/alarm/sensor/" + std::to_string(id);
+    std::string payload = isOpen ? "OPEN" : "CLOSED";
+    publish(topic, payload, 0, true);
+}
 void MqttManager::publishLockState(const int currentState, const int targetState) {
     std::string stateStr;
     if (currentState != targetState) {
@@ -596,6 +682,61 @@ void MqttManager::publishHassDiscovery() {
         std::string rfidConfigTopic = "homeassistant/tag/" + m_mqttConfig.mqttClientId + "/rfid/config";
         publish(rfidConfigTopic, payload, 1, true);
         cJSON_Delete(rfidPayload);
+    }
+
+    // Publish discovery for 8 Zone Sensors and Bypass Switches
+    for (int i = 1; i <= 8; i++) {
+        // Binary Sensor for Zone
+        cJSON *sensorPayload = cJSON_CreateObject();
+        std::string zoneName = "Zona " + std::to_string(i);
+        std::string zoneIdStr = "zona_" + std::to_string(i);
+        std::string uniqueId = deviceID + "_zona_" + std::to_string(i);
+        std::string stateTopic = "home/alarm/sensor/" + std::to_string(i);
+
+        cJSON_AddStringToObject(sensorPayload, "name", zoneName.c_str());
+        cJSON_AddStringToObject(sensorPayload, "object_id", zoneIdStr.c_str());
+        cJSON_AddStringToObject(sensorPayload, "unique_id", uniqueId.c_str());
+        cJSON_AddItemToObject(sensorPayload, "device", cJSON_Duplicate(device, true));
+        cJSON_AddStringToObject(sensorPayload, "state_topic", stateTopic.c_str());
+        cJSON_AddStringToObject(sensorPayload, "payload_on", "OPEN");
+        cJSON_AddStringToObject(sensorPayload, "payload_off", "CLOSED");
+        cJSON_AddStringToObject(sensorPayload, "availability_topic", m_mqttConfig.lwtTopic.c_str());
+
+        char *sensorPayload_cstr = cJSON_Print(sensorPayload);
+        std::string sensorPayload_str(sensorPayload_cstr);
+        free(sensorPayload_cstr);
+
+        std::string sensorConfigTopic = "homeassistant/binary_sensor/" + m_mqttConfig.mqttClientId + "/zona_" + std::to_string(i) + "/config";
+        publish(sensorConfigTopic, sensorPayload_str, 1, true);
+        cJSON_Delete(sensorPayload);
+
+        // Switch for Bypass
+        cJSON *switchPayload = cJSON_CreateObject();
+        std::string switchName = "Zona " + std::to_string(i) + " Bypass";
+        std::string switchIdStr = "zona_" + std::to_string(i) + "_bypass";
+        std::string switchUniqueId = deviceID + "_zona_" + std::to_string(i) + "_bypass";
+        std::string switchStateTopic = "home/alarm/zone/" + std::to_string(i) + "/bypass/state";
+        std::string switchCmdTopic = "home/alarm/zone/" + std::to_string(i) + "/bypass/set";
+
+        cJSON_AddStringToObject(switchPayload, "name", switchName.c_str());
+        cJSON_AddStringToObject(switchPayload, "object_id", switchIdStr.c_str());
+        cJSON_AddStringToObject(switchPayload, "unique_id", switchUniqueId.c_str());
+        cJSON_AddItemToObject(switchPayload, "device", cJSON_Duplicate(device, true));
+        cJSON_AddStringToObject(switchPayload, "state_topic", switchStateTopic.c_str());
+        cJSON_AddStringToObject(switchPayload, "command_topic", switchCmdTopic.c_str());
+        cJSON_AddStringToObject(switchPayload, "payload_on", "ON");
+        cJSON_AddStringToObject(switchPayload, "payload_off", "OFF");
+        cJSON_AddStringToObject(switchPayload, "state_on", "ON");
+        cJSON_AddStringToObject(switchPayload, "state_off", "OFF");
+        cJSON_AddStringToObject(switchPayload, "availability_topic", m_mqttConfig.lwtTopic.c_str());
+
+        char *switchPayload_cstr = cJSON_Print(switchPayload);
+        std::string switchPayload_str(switchPayload_cstr);
+        free(switchPayload_cstr);
+
+        std::string switchConfigTopic = "homeassistant/switch/" + m_mqttConfig.mqttClientId + "/zona_" + std::to_string(i) + "_bypass/config";
+        publish(switchConfigTopic, switchPayload_str, 1, true);
+        cJSON_Delete(switchPayload);
     }
 
     cJSON_Delete(device);

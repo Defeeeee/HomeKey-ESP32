@@ -86,6 +86,7 @@ ConfigManager::ConfigManager() : m_isInitialized(false) {
       {"otaPasswd", &m_miscConfig.otaPasswd},
       {"hk_key_color", &m_miscConfig.hk_key_color},
       {"setupCode", &m_miscConfig.setupCode},
+      {"alarmCode", &m_miscConfig.alarmCode},
       {"lockAlwaysUnlock", &m_miscConfig.lockAlwaysUnlock},
       {"lockAlwaysLock", &m_miscConfig.lockAlwaysLock},
       {"hkAuthPrecomputeEnabled", &m_miscConfig.hkAuthPrecomputeEnabled},
@@ -109,7 +110,32 @@ ConfigManager::ConfigManager() : m_isInitialized(false) {
       {"ethSpiBus", &m_miscConfig.ethSpiBus},
       {"ethRmiiConfig", &m_miscConfig.ethRmiiConfig},
       {"ethSpiConfig", &m_miscConfig.ethSpiConfig},
-      {"logLevel", &m_miscConfig.logLevel}
+      {"logLevel", &m_miscConfig.logLevel},
+      {"autoArmEnabled", &m_miscConfig.autoArmEnabled},
+      {"autoArmTimeoutMins", &m_miscConfig.autoArmTimeoutMins},
+      {"autoArmMode", &m_miscConfig.autoArmMode},
+      {"armedHomeZones", &m_miscConfig.armedHomeZones},
+      {"dscClockPin", &m_miscConfig.dscClockPin},
+      {"dscReadPin", &m_miscConfig.dscReadPin},
+      {"dscWritePin", &m_miscConfig.dscWritePin},
+      {"zonePin1", &m_miscConfig.zonePin1},
+      {"zonePin2", &m_miscConfig.zonePin2},
+      {"zonePin3", &m_miscConfig.zonePin3},
+      {"zonePin4", &m_miscConfig.zonePin4},
+      {"zonePin5", &m_miscConfig.zonePin5},
+      {"zonePin6", &m_miscConfig.zonePin6},
+      {"zonePin7", &m_miscConfig.zonePin7},
+      {"zonePin8", &m_miscConfig.zonePin8},
+      {"zoneDisabled1", &m_miscConfig.zoneDisabled1},
+      {"zoneDisabled2", &m_miscConfig.zoneDisabled2},
+      {"zoneDisabled3", &m_miscConfig.zoneDisabled3},
+      {"zoneDisabled4", &m_miscConfig.zoneDisabled4},
+      {"zoneDisabled5", &m_miscConfig.zoneDisabled5},
+      {"zoneDisabled6", &m_miscConfig.zoneDisabled6},
+      {"zoneDisabled7", &m_miscConfig.zoneDisabled7},
+      {"zoneDisabled8", &m_miscConfig.zoneDisabled8},
+      {"sirenPin", &m_miscConfig.sirenPin},
+      {"sirenActiveHigh", &m_miscConfig.sirenActiveHigh}
     }
     },
     {
@@ -186,8 +212,8 @@ bool ConfigManager::begin() {
 
   nvs_stats_t nvs_stats;
   nvs_get_stats(NULL, &nvs_stats);
-  ESP_LOGI(TAG,"Count: UsedEntries = (%lu), FreeEntries = (%lu), AvailableEntries = (%lu), AllEntries = (%lu)\n",
-       nvs_stats.used_entries, nvs_stats.free_entries, nvs_stats.available_entries, nvs_stats.total_entries);
+  ESP_LOGI(TAG,"Count: UsedEntries = (%u), FreeEntries = (%u), AvailableEntries = (%u), AllEntries = (%u)\n",
+       (unsigned int)nvs_stats.used_entries, (unsigned int)nvs_stats.free_entries, (unsigned int)nvs_stats.available_entries, (unsigned int)nvs_stats.total_entries);
 
   m_isInitialized = true;
 
@@ -196,6 +222,9 @@ bool ConfigManager::begin() {
   loadConfigFromNvs("MQTTSSLDATA");
   loadConfigFromNvs("MISCDATA");
   loadConfigFromNvs("HTTPSDATA");
+
+  // Force LWT topic to be home/alarm/status for HA alarm panel integration
+  m_mqttConfig.lwtTopic = "home/alarm/status";
 
   ESP_LOGI(TAG, "Initialization complete.");
   return true;
@@ -577,7 +606,7 @@ void ConfigManager::deserialize(msgpack_object obj, std::string type) {
               break;
             }
             default:
-              ESP_LOGW(TAG, "DON'T KNOW THIS ONE! - %s (%d) = %d", key.c_str(), v.val.type, v.val.via.u64);
+              ESP_LOGW(TAG, "DON'T KNOW THIS ONE! - %s (%d) = %llu", key.c_str(), (int)v.val.type, (unsigned long long)v.val.via.u64);
             }
           }
         }, m_configMap[type][key]);

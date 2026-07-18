@@ -133,6 +133,8 @@ export interface MiscConfig {
   hk_key_color: number;
   /** HomeKit setup code for pairing */
   setupCode: string;
+  /** Alarm Keypad PIN Code */
+  alarmCode: string;
   /** Force lock to always unlock (overrides normal behavior) */
   lockAlwaysUnlock: boolean;
   /** Force lock to always lock (overrides normal behavior) */
@@ -145,6 +147,10 @@ export interface MiscConfig {
   controlPin: number;
   /** GPIO pin for HomeSpan status indicator */
   hsStatusPin: number;
+  /** GPIO pin for physical siren relay output */
+  sirenPin?: number;
+  /** Active level for siren GPIO pin (true = HIGH, false = LOW) */
+  sirenActiveHigh?: boolean;
   /** Enable web authentication */
   webAuthEnabled: boolean;
   /** Web interface username */
@@ -167,6 +173,12 @@ export interface MiscConfig {
   btrLowStatusThreshold: number;
   /** Enable proximity battery monitoring */
   proxBatEnabled: boolean;
+  /** Enable auto-arm on inactivity (Auto-Protect) */
+  autoArmEnabled: boolean;
+  /** Inactivity timeout in minutes before auto-arm */
+  autoArmTimeoutMins: number;
+  /** Arm mode for auto-arm (0 = Stay/Home, 1 = Away) */
+  autoArmMode: number;
   /** Enable Ethernet connectivity */
   ethernetEnabled: boolean;
   /** Active Ethernet preset index */
@@ -179,6 +191,27 @@ export interface MiscConfig {
   ethRmiiConfig: [number, number, number, number, number];
   /** SPI configuration [freq_mhz, pin_cs, pin_irq, pin_rst, pin_sck, pin_miso, pin_mosi] */
   ethSpiConfig: [number, number, number, number, number, number, number];
+  /** Bitmask for zones monitored in Armed Home mode */
+  armedHomeZones: number;
+  dscClockPin?: number;
+  dscReadPin?: number;
+  dscWritePin?: number;
+  zonePin1?: number;
+  zonePin2?: number;
+  zonePin3?: number;
+  zonePin4?: number;
+  zonePin5?: number;
+  zonePin6?: number;
+  zonePin7?: number;
+  zonePin8?: number;
+  zoneDisabled1?: boolean;
+  zoneDisabled2?: boolean;
+  zoneDisabled3?: boolean;
+  zoneDisabled4?: boolean;
+  zoneDisabled5?: boolean;
+  zoneDisabled6?: boolean;
+  zoneDisabled7?: boolean;
+  zoneDisabled8?: boolean;
 }
 
 /**

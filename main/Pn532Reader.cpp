@@ -32,8 +32,7 @@ bool Pn532Reader::init() {
         stop();
         return false;
     }
-    ESP_LOGI(TAG, "Found chip PN532, Firmware ver. %d.%d",
-             (versiondata >> 24) & 0xFF, (versiondata >> 16) & 0xFF);
+    ESP_LOGI(TAG, "Found chip PN532, Firmware ver. %u.%u", (unsigned int)((versiondata >> 24) & 0xFF), (unsigned int)((versiondata >> 16) & 0xFF));
     m_connected = true;
     m_fwMajor = static_cast<uint8_t>((versiondata >> 24) & 0xFF);
     m_fwMinor = static_cast<uint8_t>((versiondata >> 16) & 0xFF);

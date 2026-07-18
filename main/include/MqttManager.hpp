@@ -63,6 +63,14 @@ public:
      */
     void end();
 
+    /**
+      * @brief Publishes the state of a specific security sensor.
+      * @param id Sensor index (1-8).
+      * @param isOpen True if sensor is open/breached.
+      */
+    void publishSensorState(uint8_t id, bool isOpen);
+    void publish(const std::string& topic, const std::string& payload, int qos = 0, bool retain = false);
+
 private:
     /**
       * @brief Publishes the current state of the lock.
@@ -95,7 +103,6 @@ private:
     void onData(const std::string& topic, const std::string& data);
 
     // --- Publishing Logic ---
-    void publish(const std::string& topic, const std::string& payload, int qos = 0, bool retain = false);
     void publishHassDiscovery();
     void publishMqttStatus(bool connected, MqttErrorCode errorCode, const std::string& errorMessage = "");
 
@@ -118,6 +125,7 @@ private:
     AppEventLoop::SubscriptionHandle m_lock_state_changed;
     AppEventLoop::SubscriptionHandle m_alt_action;
     AppEventLoop::SubscriptionHandle m_nfc_event;
+    AppEventLoop::SubscriptionHandle m_alarm_event;
 
     // Status tracking (replaces event-based status publishing)
     MqttErrorCode m_lastErrorCode = MqttErrorCode::NONE;

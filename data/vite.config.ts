@@ -22,9 +22,8 @@ export default defineConfig(({ mode }) => {
       tailwindcss(),
       ...(isDev ? [devtoolsJson()] : []),
       compression({
-        algorithms: [
-          'gzip'
-        ],
+        algorithms: ['gzip'],
+        compressionOptions: { level: 9 },
         deleteOriginalAssets: true
       })
     ],
@@ -41,21 +40,6 @@ export default defineConfig(({ mode }) => {
       target: 'es2020',
       rolldownOptions: {
         output: {
-          codeSplitting: {
-            minSize: 10000,
-            groups: [
-              {
-                name: 'vendor',
-                test: /node_modules/,
-                priority: 2,
-              },
-              {
-                name: 'components',
-                test: /src\/lib\/components/,
-                priority: 1,
-              }
-            ],
-          },
           minify: true,
           polyfillRequire: false,
         }

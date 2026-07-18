@@ -11,7 +11,11 @@ export type SystemInfo = {
   nfc_connected: boolean,
   mqtt_connected: boolean,
   mqtt_error_code: number,
-  mqtt_error_message?: string
+  mqtt_error_message?: string,
+  alarm_state: string,
+  alarm_zones: boolean[],
+  alarm_bypassed: boolean[],
+  alarm_disabled: boolean[]
 };
 
 export const systemInfo : SystemInfo = $state({
@@ -26,7 +30,11 @@ export const systemInfo : SystemInfo = $state({
   chip_model: 0,
   nfc_connected: false,
   mqtt_connected: false,
-  mqtt_error_code: 0
+  mqtt_error_code: 0,
+  alarm_state: 'disarmed',
+  alarm_zones: [false, false, false, false, false, false, false, false],
+  alarm_bypassed: [false, false, false, false, false, false, false, false],
+  alarm_disabled: [false, false, false, false, false, false, false, false]
 });
 
 /**

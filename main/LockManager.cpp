@@ -1,3 +1,5 @@
+#include <Arduino.h>
+#include "include/user_alarm.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "config.hpp"
@@ -64,6 +66,15 @@ LockManager::LockManager(const espConfig::misc_config_t& miscConfig, const espCo
     .skip_unhandled_events = false
   };
   esp_timer_create(&momentaryStateTimer_arg, &momentaryStateTimer);
+  m_alarm_state_event = AppEventLoop::subscribe(ALARM_EVENT, ALARM_STATE_CHANGED, [&](const uint8_t* data, size_t size){
+      if(size == 0 || data == nullptr) return;
+      std::string state(reinterpret_cast<const char*>(data), size);
+      if (state == "disarmed") {
+          overrideState(lockStates::UNLOCKED, lockStates::UNLOCKED, Source::INTERNAL);
+      } else if (state == "armed_away" || state == "armed_home") {
+          overrideState(lockStates::LOCKED, lockStates::LOCKED, Source::INTERNAL);
+      }
+  });
 }
 
 /**
@@ -84,18 +95,15 @@ void LockManager::begin() {
       if(ec) { ESP_LOGE(TAG, "Failed to deserialize NFC event: %s", ec.message().c_str()); return; }
       ESP_LOGD(TAG, "Received NFC event: %d", nfc_event.type);
       if(nfc_event.type == HOMEKEY_TAP) {
-        ESP_LOGI(TAG, "Processing NFC tap request...");
         EventHKTap s = alpaca::deserialize<EventHKTap>(nfc_event.data, ec);
         if (!ec) {
           if (s.status) {
-            if (m_miscConfig.lockAlwaysUnlock) {
-              setTargetState(lockStates::UNLOCKED, Source::NFC);
-            } else if (m_miscConfig.lockAlwaysLock) {
-              setTargetState(lockStates::LOCKED, Source::NFC);
-            } else {
-              int newState = (m_currentState == lockStates::LOCKED) ? lockStates::UNLOCKED : lockStates::LOCKED;
-              setTargetState(newState, Source::NFC);
-            }
+            // TOGGLE FORZADO POR NFC
+            int newState = (m_currentState == lockStates::LOCKED) ? lockStates::UNLOCKED : lockStates::LOCKED;
+            Serial.printf(">>> [NFC TAP] Toggle de %d a %d <<<\n", (int)m_currentState, newState);
+            setTargetState(newState, Source::NFC);
+          } else {
+            user_alarm_failed_tap();
           }
         } else {
           ESP_LOGE(TAG, "Failed to deserialize HomeKey event: %s", ec.message().c_str());
@@ -198,28 +206,34 @@ int LockManager::getTargetState() const {
  */
 
 void LockManager::setTargetState(uint8_t state, Source source) {
-    if (state == m_targetState && m_currentState == m_targetState) {
-        ESP_LOGD(TAG, "Requested state is already the current state. No action taken.");
+    Serial.printf(">>> [DEBUG] setTargetState: %d, source: %d <<<\n", (int)state, (int)source);
+    
+    if (state == (uint8_t)m_targetState && (uint8_t)m_currentState == (uint8_t)m_targetState) {
         return;
     }
 
-    ESP_LOGI(TAG, "Setting target state to %d (c:%d,t:%d), from source %d", state, m_currentState, m_targetState, static_cast<int>(source));
-
     stopMomentaryTimer();
+    m_targetState = static_cast<lockStates>(state);
+    m_currentState = m_targetState; // SYNC INMEDIATO PARA EL MOCK
 
-    m_targetState = state;
+    // SINCRONIZACION CON LA ALARMA
+    if (state == lockStates::UNLOCKED) {
+        user_alarm_disarm();
+    } else if (state == lockStates::LOCKED) {
+        user_alarm_arm_away();
+    }
 
     EventLockState s{
-      .currentState = m_currentState,
-      .targetState = m_targetState,
+      .currentState = static_cast<uint8_t>(m_currentState),
+      .targetState = static_cast<uint8_t>(m_targetState),
       .source = LockManager::INTERNAL
     };
     std::array<uint8_t, sizeof(EventLockState)> d{};
     size_t d_len = alpaca::serialize(s, d);
+    
     if (m_actionsConfig.hkDumbSwitchMode) {
-      ESP_LOGI(TAG, "Dummy Action is enabled!");
       m_currentState = m_targetState;
-      s.currentState = m_targetState;
+      s.currentState = static_cast<uint8_t>(m_targetState);
       d_len = alpaca::serialize(s, d);
       AppEventLoop::publish(HW_EVENT, HW_ACTION, d.data(), d_len);
     } else if((source == NFC && m_actionsConfig.hkGpioControlledState) || source != NFC) {

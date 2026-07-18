@@ -1,3 +1,5 @@
+#include "include/user_alarm.h"
+#include <WiFi.h>
 #include <algorithm>
 #include <cstdint>
 #include <memory>
@@ -35,6 +37,7 @@ std::unique_ptr<NfcManager> nfcManager;
 
 static dns_server_handle_t dns_server = NULL;
 
+static int wifiDisconnectCount = 0;
 bool pollHS = false;
 
 static void dhcp_set_captiveportal_url(void) {
@@ -51,7 +54,7 @@ static void dhcp_set_captiveportal_url(void) {
     esp_netif_t* netif = esp_netif_get_handle_from_ifkey("WIFI_AP_DEF");
 
     ESP_ERROR_CHECK_WITHOUT_ABORT(esp_netif_dhcps_stop(netif));
-    ESP_ERROR_CHECK(esp_netif_dhcps_option(netif, ESP_NETIF_OP_SET, ESP_NETIF_CAPTIVEPORTAL_URI, captiveportal_uri, strlen(captiveportal_uri)));
+    // ESP_ERROR_CHECK(esp_netif_dhcps_option(netif, ESP_NETIF_OP_SET, ESP_NETIF_CAPTIVEPORTAL_URI, captiveportal_uri, strlen(captiveportal_uri)));
     ESP_ERROR_CHECK_WITHOUT_ABORT(esp_netif_dhcps_start(netif));
 }
 
@@ -99,6 +102,8 @@ using namespace loggable;
  */
 void setup() {
   Serial.begin(115200);
+  WiFi.setHostname("esp32-alarm");
+  homeSpan.setWifiCredentials("defeWifi", "fedeazeth1");
   loggable::espidf::LogHook::install(false, true);
   Sinker::instance().add_sinker(std::make_shared<loggable::ConsoleLogSinker>());
   esp_err_t err = esp_event_loop_create_default();
@@ -164,6 +169,8 @@ void setup() {
     }
   } else {
   nfc_init:
+    // NFC temporarily disabled because hardware is not attached yet
+    /*
     nfcManager = std::make_unique<NfcManager>(*readerDataManager,
                                 miscConfig.nfcPinsPreset == PIN_UNSET ? miscConfig.nfcGpioPins : nfcGpioPinsPresets[miscConfig.nfcPinsPreset].gpioPins,
                                 miscConfig.nfcReaderType,
@@ -172,6 +179,8 @@ void setup() {
                                 miscConfig.hkAuthPrecomputeEnabled,
                                 miscConfig.nfcFastPollingEnabled);
     nfcManager->begin();
+    */
+    ESP_LOGI("Main", "NFC Module disabled (temporarily for hardware bypass)");
   }
   webServerManager->setNfcManager(nfcManager.get());
   webServerManager->setMqttManager(mqttManager.get());
@@ -179,15 +188,21 @@ void setup() {
   homekitLock->begin();
   lockManager->begin();
   WiFi.onEvent([](arduino_event_id_t event){
-    static uint8_t count = 0;
-    if(count >= 6){
-      homeSpan.processSerialCommand("A");
-      count = 0;
+    wifiDisconnectCount = 0;
+  }, ARDUINO_EVENT_WIFI_STA_GOT_IP);
+
+  WiFi.onEvent([](arduino_event_id_t event){
+    if(wifiDisconnectCount >= 6){
+      ESP_LOGE("Main", "Wi-Fi disconnected 6 times consecutively. Restarting system...");
+      vTaskDelay(pdMS_TO_TICKS(100));
+      esp_restart();
     } else {
-      count++;
+      wifiDisconnectCount++;
+      ESP_LOGW("Main", "Wi-Fi disconnected. Consecutive failure count: %d", wifiDisconnectCount);
     }
   }, ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
   pollHS = true;
+  user_alarm_setup();
 }
 
 /**
@@ -198,7 +213,8 @@ void setup() {
  */
 
 void loop() {
+  user_alarm_loop();
   if(pollHS)
     homeSpan.poll();
-  vTaskDelay(pdMS_TO_TICKS(50));
+  vTaskDelay(1);
 }

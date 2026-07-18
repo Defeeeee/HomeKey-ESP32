@@ -38,6 +38,13 @@
 		e.preventDefault();
 		try {
 			if (!miscConfig || !misc) return;
+			if (miscConfig.alarmCode) {
+				const pinRegex = /^[0-9]{4}$/;
+				if (!pinRegex.test(miscConfig.alarmCode)) {
+					alert("Alarm PIN code must be exactly 4 digits (0-9).");
+					return;
+				}
+			}
 			const result = await saveConfig("misc", diff(misc, miscConfig));
 			if (result.success) {
 				miscConfig = result.data;
@@ -107,9 +114,25 @@
 		}
 	};
 
+	// Initialize homeZones array from miscConfig.armedHomeZones bitmask
+	let homeZones = $state<boolean[]>(
+		Array.from({ length: 8 }, (_, i) => (((miscConfig.armedHomeZones ?? 0xFF) >> i) & 1) === 1)
+	);
+
+	const updateArmedHomeZones = () => {
+		let mask = 0;
+		for (let i = 0; i < 8; i++) {
+			if (homeZones[i]) {
+				mask |= (1 << i);
+			}
+		}
+		miscConfig.armedHomeZones = mask;
+	};
+
 	const resetForm = () => {
 		if (misc) {
 			miscConfig = misc;
+			homeZones = Array.from({ length: 8 }, (_, i) => (((misc.armedHomeZones ?? 0xFF) >> i) & 1) === 1);
 		}
 	};
 
@@ -412,6 +435,25 @@
 								ethConfig={ethConfig}
 								nfcConnected={nfcConnected}
 								bind:nfcFastPollingEnabled={miscConfig.nfcFastPollingEnabled}
+								bind:dscClockPin={miscConfig.dscClockPin}
+								bind:dscReadPin={miscConfig.dscReadPin}
+								bind:dscWritePin={miscConfig.dscWritePin}
+								bind:zonePin1={miscConfig.zonePin1}
+								bind:zonePin2={miscConfig.zonePin2}
+								bind:zonePin3={miscConfig.zonePin3}
+								bind:zonePin4={miscConfig.zonePin4}
+								bind:zonePin5={miscConfig.zonePin5}
+								bind:zonePin6={miscConfig.zonePin6}
+								bind:zonePin7={miscConfig.zonePin7}
+								bind:zonePin8={miscConfig.zonePin8}
+								bind:zoneDisabled1={miscConfig.zoneDisabled1}
+								bind:zoneDisabled2={miscConfig.zoneDisabled2}
+								bind:zoneDisabled3={miscConfig.zoneDisabled3}
+								bind:zoneDisabled4={miscConfig.zoneDisabled4}
+								bind:zoneDisabled5={miscConfig.zoneDisabled5}
+								bind:zoneDisabled6={miscConfig.zoneDisabled6}
+								bind:zoneDisabled7={miscConfig.zoneDisabled7}
+								bind:zoneDisabled8={miscConfig.zoneDisabled8}
 							/>
 
 							<!-- HomeSpan -->
@@ -427,7 +469,7 @@
 										class="input input-sm input-bordered w-full"
 									/>
 								</div>
-								<div class="grid grid-cols-2 gap-2">
+								<div class="grid grid-cols-3 gap-2">
 									<div class="form-control">
 										<label class="label">
 											<span class="label-text text-xs">Control GPIO Pin</span>
@@ -445,6 +487,16 @@
 										<input
 											type="number"
 											bind:value={miscConfig.hsStatusPin}
+											class="input input-sm input-bordered w-full"
+										/>
+									</div>
+									<div class="form-control">
+										<label class="label">
+											<span class="label-text text-xs">Siren Relay GPIO Pin</span>
+										</label>
+										<input
+											type="number"
+											bind:value={miscConfig.sirenPin}
 											class="input input-sm input-bordered w-full"
 										/>
 									</div>
@@ -500,6 +552,95 @@
 										</div>
 									</div>
 								{/if}
+							</div>
+
+							<!-- Alarm System Section -->
+							<div class="space-y-4 border-t border-base-300 pt-4">
+								<div>
+									<h3 class="text-sm font-semibold">Alarm System Settings</h3>
+									<p class="text-xs text-base-content/60">Configure the keypad PIN code and zone settings.</p>
+								</div>
+
+								<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+									<div class="form-control">
+										<label class="label">
+											<span class="label-text text-xs">Keypad PIN Code</span>
+										</label>
+										<input
+											type="text"
+											bind:value={miscConfig.alarmCode}
+											placeholder="1234"
+											maxlength="4"
+											class="input input-sm input-bordered w-full"
+											required
+											inputmode="numeric"
+										/>
+									</div>
+								</div>
+
+								<!-- Auto-Protect Settings -->
+								<div class="space-y-3 bg-base-100 p-3 rounded-lg border border-base-200">
+									<div class="flex items-center justify-between">
+										<div>
+											<h4 class="text-xs font-semibold">Auto-Protect (No-Motion Auto-Arming)</h4>
+											<p class="text-xs text-base-content/60">Automatically arm the system after a period of inactivity.</p>
+										</div>
+										<input
+											type="checkbox"
+											bind:checked={miscConfig.autoArmEnabled}
+											class="toggle toggle-primary toggle-sm"
+										/>
+									</div>
+
+									{#if miscConfig.autoArmEnabled}
+										<div class="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
+											<div class="form-control">
+												<label class="label">
+													<span class="label-text text-xs">Inactivity Timeout (minutes)</span>
+												</label>
+												<input
+													type="number"
+													bind:value={miscConfig.autoArmTimeoutMins}
+													min="1"
+													max="1440"
+													class="input input-sm input-bordered w-full"
+													required
+												/>
+											</div>
+											<div class="form-control">
+												<label class="label">
+													<span class="label-text text-xs">Arming Mode</span>
+												</label>
+												<select
+													bind:value={miscConfig.autoArmMode}
+													class="select select-sm select-bordered w-full"
+												>
+													<option value={0}>Stay / Home Mode</option>
+													<option value={1}>Away Mode</option>
+												</select>
+											</div>
+										</div>
+									{/if}
+								</div>
+
+								<div class="space-y-2">
+									<h4 class="text-xs font-semibold">Alarm Zones (Armed Home Mode)</h4>
+									<p class="text-xs text-base-content/60">Select which security zones are active and monitored when the system is armed in Home mode.</p>
+								</div>
+
+								<div class="grid grid-cols-2 sm:grid-cols-3 gap-3 bg-base-100 p-3 rounded-lg">
+									{#each Array.from({ length: 6 }) as _, i}
+										<label class="flex items-center gap-3 py-1.5 px-2 hover:bg-base-200/50 rounded-lg cursor-pointer">
+											<input
+												type="checkbox"
+												bind:checked={homeZones[i]}
+												onchange={updateArmedHomeZones}
+												class="checkbox checkbox-primary checkbox-sm"
+											/>
+											<span class="text-sm font-medium">Zone {i + 1} {i === 0 ? '(Delay)' : '(Instant)'}</span>
+										</label>
+									{/each}
+								</div>
 							</div>
 
 							<!-- HTTPS Section -->

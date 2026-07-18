@@ -8,6 +8,7 @@
 #include "app_event_loop.hpp"
 #include "fmt/ranges.h"
 #include "WebServerManager.hpp"
+#include "include/user_alarm.h"
 #include "ConfigManager.hpp"
 #include "HomeSpan.h"
 #include "MqttManager.hpp"
@@ -20,7 +21,7 @@
 #include "esp_heap_caps.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
-#include "esp_log_level.h"
+#include "esp_log.h"
 #include "esp_wifi.h"
 #include "eth_structs.hpp"
 #include "eventStructs.hpp"
@@ -139,7 +140,7 @@ void WebServerManager::begin() {
   bool isApMode = (wifiErr == ESP_OK && (currentMode == WIFI_MODE_AP || currentMode == WIFI_MODE_APSTA));
   bool isHttpsEnabled = m_configManager.getConfig<espConfig::misc_config_t>().webHttpsEnabled;
   httpd_ssl_config_t ssl_config = HTTPD_SSL_CONFIG_DEFAULT();
-  ssl_config.httpd.max_uri_handlers = 22;
+  ssl_config.httpd.max_uri_handlers = 32;
   ssl_config.httpd.max_open_sockets = 4;
   ssl_config.httpd.stack_size = 6144;
   ssl_config.httpd.uri_match_fn = httpd_uri_match_wildcard;
@@ -167,7 +168,7 @@ void WebServerManager::begin() {
   }
 
   if (httpd_ssl_start(&m_server, &ssl_config) == ESP_OK) {
-    ESP_LOGI(TAG, "HTTP server started, free heap: %zu", esp_get_free_heap_size());
+    ESP_LOGI(TAG, "HTTP server started, free heap: %lu", (unsigned long)esp_get_free_heap_size());
   } else {
     ESP_LOGE(TAG, "Failed to start HTTP server");
     ssl_config.transport_mode = HTTPD_SSL_TRANSPORT_INSECURE;
@@ -208,6 +209,10 @@ void WebServerManager::begin() {
   }
 
   ESP_LOGI(TAG, "Web server initialization complete");
+
+  m_alarm_event = AppEventLoop::subscribe(ALARM_EVENT, ALARM_STATE_CHANGED, [this](const uint8_t* data, size_t size){
+    this->broadcastDeviceMetrics();
+  });
 
   m_isInitialized = true;
 }
@@ -479,7 +484,7 @@ esp_err_t WebServerManager::handleStaticFiles(httpd_req_t *req) {
       httpd_resp_send_chunk(req, NULL, 0);
       return ESP_FAIL;
     }
-    taskYIELD();
+    vTaskDelay(pdMS_TO_TICKS(5));
   }
   file.close();
   httpd_resp_send_chunk(req, NULL, 0);
@@ -516,7 +521,7 @@ esp_err_t WebServerManager::handleRootOrHash(httpd_req_t *req) {
   }
   httpd_resp_set_type(req, "text/html");
   httpd_resp_set_hdr(req, "Connection", "close");
-  httpd_resp_set_hdr(req, "Cache-Control", "max-age=86400");
+  httpd_resp_set_hdr(req, "Cache-Control", "no-store, no-cache, must-revalidate");
   httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
 
   char buffer[1024];
@@ -1977,6 +1982,28 @@ esp_err_t WebServerManager::handleWebSocketMessage(httpd_req_t *req,
     response = getDeviceInfo();
   } else if (msg_type == "ota_info") {
     response = getOTAInfo();
+  } else if (msg_type == "set_alarm_state") {
+    cJSON *state_item = cJSON_GetObjectItem(json, "data");
+    if(state_item && cJSON_IsString(state_item)) {
+      std::string cmd = state_item->valuestring;
+      AppEventLoop::publish(ALARM_EVENT, ALARM_SET_REMOTE, (const uint8_t*)cmd.c_str(), cmd.length());
+      ESP_LOGI("WS_ALARM", "Alarm command received via WS: %s", cmd.c_str());
+    }
+    response = getDeviceMetrics();
+  } else if (msg_type == "set_zone_bypass") {
+    cJSON *zone_item = cJSON_GetObjectItem(json, "zone");
+    cJSON *bypass_item = cJSON_GetObjectItem(json, "bypass");
+    if (zone_item && cJSON_IsNumber(zone_item) && bypass_item && cJSON_IsBool(bypass_item)) {
+      int zoneIdx = zone_item->valueint; // 0-7
+      bool bypass = cJSON_IsTrue(bypass_item);
+      user_alarm_set_zone_bypass(zoneIdx, bypass);
+    }
+    response = getDeviceMetrics();
+  } else if (msg_type == "siren_test") {
+    cJSON *active_item = cJSON_GetObjectItem(json, "active");
+    bool active = active_item ? cJSON_IsTrue(active_item) : true;
+    user_alarm_siren_test(active);
+    response = getDeviceMetrics();
   } else if (msg_type == "set_log_level") {  
     cJSON *level_item = cJSON_GetObjectItem(json, "data");
     if(level_item && cJSON_IsNumber(level_item)) {
@@ -2018,7 +2045,35 @@ std::string WebServerManager::getDeviceMetrics() {
   if (m_mqttManager && !m_mqttManager->getLastErrorMessage().empty()) {
     cJSON_AddStringToObject(status, "mqtt_error_message", m_mqttManager->getLastErrorMessage().c_str());
   }
+  
+  cJSON_AddStringToObject(status, "alarm_state", user_alarm_get_state_string());
+  cJSON_AddBoolToObject(status, "siren_testing", user_alarm_is_siren_testing());
+  std::string currentAlarmState = user_alarm_get_state_string();
+  cJSON_AddBoolToObject(status, "siren_active", (currentAlarmState == "triggered" || user_alarm_is_siren_testing()));
+  cJSON *zones = cJSON_CreateArray();
+  for (int i = 1; i <= 8; i++) {
+    cJSON_AddItemToArray(zones, cJSON_CreateBool(user_alarm_get_sensor_state(i)));
+  }
+  cJSON_AddItemToObject(status, "alarm_zones", zones);
+
+  cJSON *bypassed = cJSON_CreateArray();
+  for (int i = 1; i <= 8; i++) {
+    cJSON_AddItemToArray(bypassed, cJSON_CreateBool(user_alarm_is_zone_bypassed(i - 1)));
+  }
+  cJSON_AddItemToObject(status, "alarm_bypassed", bypassed);
+
+  cJSON *disabled = cJSON_CreateArray();
+  for (int i = 0; i < 8; i++) {
+    cJSON_AddItemToArray(disabled, cJSON_CreateBool(user_alarm_is_zone_disabled(i)));
+  }
+  cJSON_AddItemToObject(status, "alarm_disabled", disabled);
+  
   return cjson_to_string_and_free(status);
+}
+
+void WebServerManager::broadcastDeviceMetrics() {
+  std::string metrics = getDeviceMetrics();
+  broadcastWs((const uint8_t *)metrics.c_str(), metrics.size(), HTTPD_WS_TYPE_TEXT);
 }
 
 std::string WebServerManager::getDeviceInfo() {
@@ -2078,7 +2133,7 @@ esp_err_t WebServerManager::handleOTAUpload(httpd_req_t *req) {
 
  auto app_part =  esp_ota_get_running_partition();
   if (uploadType == OTAUploadType::FIRMWARE && req->content_len > app_part->size) {
-    ESP_LOGE(TAG, "OTA size %zu > max %zu", req->content_len, app_part->size);
+    ESP_LOGE(TAG, "OTA size %lu > max %lu", (unsigned long)req->content_len, (unsigned long)app_part->size);
     instance->m_otaInProgress = false;
     httpd_resp_set_status(req, "413 Payload Too Large");
     httpd_resp_set_type(req, "application/json");
@@ -2087,7 +2142,7 @@ esp_err_t WebServerManager::handleOTAUpload(httpd_req_t *req) {
   }
   auto fs_part = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, "spiffs");
   if (uploadType == OTAUploadType::LITTLEFS && req->content_len > fs_part->size) {
-    ESP_LOGE(TAG, "OTA size %zu > max %zu", req->content_len, fs_part->size);
+    ESP_LOGE(TAG, "OTA size %lu > max %lu", (unsigned long)req->content_len, (unsigned long)fs_part->size);
     instance->m_otaInProgress = false;
     httpd_resp_set_status(req, "413 Payload Too Large");
     httpd_resp_set_type(req, "application/json");
