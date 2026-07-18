@@ -286,7 +286,7 @@
         systemInfo.siren_testing = active;
       }
       if (active) playShortBeep(1000, 0.2);
-      addSimLog(`Siren manual test ${active ? 'ACTIVATED' : 'DEACTIVATED'} (GPIO Pin 34)`, 3, 'SIMULATOR');
+      addSimLog(`Siren manual test ${active ? 'ACTIVATED' : 'DEACTIVATED'} (GPIO Pin 26)`, 3, 'SIMULATOR');
     }
   }
 
@@ -660,7 +660,7 @@
                 </svg>
               </div>
               <div>
-                <div class="text-xs font-semibold text-slate-200">Probador de Sirena (Pin 34)</div>
+                <div class="text-xs font-semibold text-slate-200">Probador de Sirena (Pin 26)</div>
                 <div class="text-[10px] text-slate-400">Mantén presionado para activar relé (N.O.)</div>
               </div>
             </div>
