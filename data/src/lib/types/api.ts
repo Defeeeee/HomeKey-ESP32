@@ -147,6 +147,10 @@ export interface MiscConfig {
   controlPin: number;
   /** GPIO pin for HomeSpan status indicator */
   hsStatusPin: number;
+  /** GPIO pin for physical siren relay output */
+  sirenPin?: number;
+  /** Active level for siren GPIO pin (true = HIGH, false = LOW) */
+  sirenActiveHigh?: boolean;
   /** Enable web authentication */
   webAuthEnabled: boolean;
   /** Web interface username */

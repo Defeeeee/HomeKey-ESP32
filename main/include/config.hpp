@@ -215,6 +215,8 @@ namespace espConfig
     bool zoneDisabled6 = false;
     bool zoneDisabled7 = false;
     bool zoneDisabled8 = false;
+    uint8_t sirenPin = 34;
+    bool sirenActiveHigh = true;
   };
   struct actions_config_t {
     enum colorMap

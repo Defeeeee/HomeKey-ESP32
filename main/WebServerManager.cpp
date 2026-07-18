@@ -1999,6 +1999,11 @@ esp_err_t WebServerManager::handleWebSocketMessage(httpd_req_t *req,
       user_alarm_set_zone_bypass(zoneIdx, bypass);
     }
     response = getDeviceMetrics();
+  } else if (msg_type == "siren_test") {
+    cJSON *active_item = cJSON_GetObjectItem(json, "active");
+    bool active = active_item ? cJSON_IsTrue(active_item) : true;
+    user_alarm_siren_test(active);
+    response = getDeviceMetrics();
   } else if (msg_type == "set_log_level") {  
     cJSON *level_item = cJSON_GetObjectItem(json, "data");
     if(level_item && cJSON_IsNumber(level_item)) {
@@ -2042,6 +2047,9 @@ std::string WebServerManager::getDeviceMetrics() {
   }
   
   cJSON_AddStringToObject(status, "alarm_state", user_alarm_get_state_string());
+  cJSON_AddBoolToObject(status, "siren_testing", user_alarm_is_siren_testing());
+  std::string currentAlarmState = user_alarm_get_state_string();
+  cJSON_AddBoolToObject(status, "siren_active", (currentAlarmState == "triggered" || user_alarm_is_siren_testing()));
   cJSON *zones = cJSON_CreateArray();
   for (int i = 1; i <= 8; i++) {
     cJSON_AddItemToArray(zones, cJSON_CreateBool(user_alarm_get_sensor_state(i)));

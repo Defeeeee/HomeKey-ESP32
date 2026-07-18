@@ -469,7 +469,7 @@
 										class="input input-sm input-bordered w-full"
 									/>
 								</div>
-								<div class="grid grid-cols-2 gap-2">
+								<div class="grid grid-cols-3 gap-2">
 									<div class="form-control">
 										<label class="label">
 											<span class="label-text text-xs">Control GPIO Pin</span>
@@ -487,6 +487,16 @@
 										<input
 											type="number"
 											bind:value={miscConfig.hsStatusPin}
+											class="input input-sm input-bordered w-full"
+										/>
+									</div>
+									<div class="form-control">
+										<label class="label">
+											<span class="label-text text-xs">Siren Relay GPIO Pin</span>
+										</label>
+										<input
+											type="number"
+											bind:value={miscConfig.sirenPin}
 											class="input input-sm input-bordered w-full"
 										/>
 									</div>

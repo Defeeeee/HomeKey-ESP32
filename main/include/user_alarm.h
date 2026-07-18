@@ -15,6 +15,8 @@ bool user_alarm_is_zone_bypassed(int zoneIdx);
 void user_alarm_set_zone_bypass(int zoneIdx, bool bypassed);
 bool user_alarm_is_zone_disabled(int zoneIdx);
 void user_alarm_set_sensor_state(int id, bool isOpen);
+void user_alarm_siren_test(bool active);
+bool user_alarm_is_siren_testing();
 #ifdef __cplusplus
 }
 #endif

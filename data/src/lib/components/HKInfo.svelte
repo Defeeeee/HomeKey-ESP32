@@ -277,6 +277,19 @@
     }
   };
 
+  function setSirenTest(active: boolean) {
+    if (ws && ws.connected) {
+      ws.send({ type: 'siren_test', active });
+    } else if (isSimMode) {
+      if (systemInfo) {
+        systemInfo.siren_active = active;
+        systemInfo.siren_testing = active;
+      }
+      if (active) playShortBeep(1000, 0.2);
+      addSimLog(`Siren manual test ${active ? 'ACTIVATED' : 'DEACTIVATED'} (GPIO Pin 34)`, 3, 'SIMULATOR');
+    }
+  }
+
   function toggleBypass(index: number) {
     const isBypassed = alarm_bypassed[index];
     if (ws && ws.connected) {
@@ -635,6 +648,31 @@
               class="w-1/3 py-2.5 rounded-full text-xs font-bold text-center z-10 transition-all duration-300 {alarm_state === 'armed_away' || alarm_state === 'arming_away' ? 'text-indigo-400 font-extrabold' : 'text-slate-400 hover:text-white'}"
             >
               Arm Away
+            </button>
+          </div>
+
+          <!-- Siren Test Button (Normally Open / Press & Hold) -->
+          <div class="mt-4 pt-4 border-t border-white/5 flex items-center justify-between gap-3">
+            <div class="flex items-center gap-2.5">
+              <div class="p-2 rounded-xl {systemInfo?.siren_active ? 'bg-rose-500/20 text-rose-400 animate-pulse' : 'bg-slate-800 text-slate-400'}">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+                </svg>
+              </div>
+              <div>
+                <div class="text-xs font-semibold text-slate-200">Probador de Sirena (Pin 34)</div>
+                <div class="text-[10px] text-slate-400">Mantén presionado para activar relé (N.O.)</div>
+              </div>
+            </div>
+            <button 
+              onmousedown={() => setSirenTest(true)}
+              onmouseup={() => setSirenTest(false)}
+              onmouseleave={() => setSirenTest(false)}
+              ontouchstart={(e) => { e.preventDefault(); setSirenTest(true); }}
+              ontouchend={(e) => { e.preventDefault(); setSirenTest(false); }}
+              class="btn btn-xs rounded-xl font-bold uppercase tracking-wider transition-all duration-200 {systemInfo?.siren_active ? 'btn-error shadow-[0_0_15px_rgba(239,68,68,0.4)]' : 'btn-outline border-white/20 text-slate-300 hover:bg-rose-500/20 hover:text-rose-300 hover:border-rose-500/40'}"
+            >
+              {systemInfo?.siren_active ? '🔊 Probando...' : 'Probador N.O.'}
             </button>
           </div>
         </div>

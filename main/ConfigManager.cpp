@@ -133,7 +133,9 @@ ConfigManager::ConfigManager() : m_isInitialized(false) {
       {"zoneDisabled5", &m_miscConfig.zoneDisabled5},
       {"zoneDisabled6", &m_miscConfig.zoneDisabled6},
       {"zoneDisabled7", &m_miscConfig.zoneDisabled7},
-      {"zoneDisabled8", &m_miscConfig.zoneDisabled8}
+      {"zoneDisabled8", &m_miscConfig.zoneDisabled8},
+      {"sirenPin", &m_miscConfig.sirenPin},
+      {"sirenActiveHigh", &m_miscConfig.sirenActiveHigh}
     }
     },
     {

@@ -70,7 +70,19 @@ bool isWaitingForInstallerCode = false;
 bool isInstallerMode = false;
 bool isRssiMeterMode = false;
 bool isMacroMode = false;
+bool isSirenTestActive = false;
 unsigned long lastKeypadActivityTime = 0;
+
+void broadcast_ui_update();
+
+extern "C" void user_alarm_siren_test(bool active) {
+    isSirenTestActive = active;
+    broadcast_ui_update();
+}
+
+extern "C" bool user_alarm_is_siren_testing() {
+    return isSirenTestActive;
+}
 unsigned long lastSystemActivityTime = 0;
 
 void save_alarm_state(AlarmMode mode) {
@@ -290,6 +302,13 @@ extern "C" void user_alarm_setup() {
             sensors[zone.sensorIndex] = false;
         }
     }
+    // Initialize Siren Pin if configured
+    if (miscConfig.sirenPin != 255) {
+        pinMode(miscConfig.sirenPin, OUTPUT);
+        digitalWrite(miscConfig.sirenPin, miscConfig.sirenActiveHigh ? LOW : HIGH);
+        Serial.printf("📢 [ALARM] Configured Siren GPIO Pin %d (Active %s)\n", miscConfig.sirenPin, miscConfig.sirenActiveHigh ? "HIGH" : "LOW");
+    }
+
     currentMode = restore_alarm_state();
     if (currentMode == ARMING_AWAY) currentMode = ARMED_AWAY;
     if (currentMode == ARMING_HOME) currentMode = ARMED_HOME;
@@ -775,15 +794,22 @@ extern "C" void user_alarm_loop() {
         }
     }
 
-    // 7. Handle Triggered Siren / Keypad Buzzer Wailing
+    // 7. Handle Triggered Siren / Keypad Buzzer Wailing & Physical Siren GPIO Pin
     static unsigned long last_beep = 0;
-    if (currentMode == TRIGGERED && (last_beep == 0 || millis() - last_beep > 60000)) {
-        Serial.println("📢 !!! SIRENA ACTIVA !!!");
-        dsc.buzzer(255); // Keep wailing (renew keepalive every 60s)
-        last_beep = millis();
-    }
-    if (currentMode != TRIGGERED) {
+    bool sirenActive = (currentMode == TRIGGERED) || isSirenTestActive;
+    if (sirenActive) {
+        if (last_beep == 0 || millis() - last_beep > 60000) {
+            Serial.println("📢 !!! SIRENA ACTIVA !!!");
+            dsc.buzzer(255); // Keep wailing (renew keepalive every 60s)
+            last_beep = millis();
+        }
+    } else {
         last_beep = 0;
+    }
+
+    auto& miscConfig = configManager->getConfig<espConfig::misc_config_t>();
+    if (miscConfig.sirenPin != 255) {
+        digitalWrite(miscConfig.sirenPin, sirenActive ? (miscConfig.sirenActiveHigh ? HIGH : LOW) : (miscConfig.sirenActiveHigh ? LOW : HIGH));
     }
 
     // 8. Synchronize physical keypad LEDs with system state in real-time
@@ -915,7 +941,6 @@ extern "C" void user_alarm_loop() {
     }
 
     // Auto-Protect (No-Motion Auto-Arming)
-    auto& miscConfig = configManager->getConfig<espConfig::misc_config_t>();
     if (currentMode == DISARMED && miscConfig.autoArmEnabled) {
         unsigned long elapsed = millis() - lastSystemActivityTime;
         unsigned long timeoutMs = (unsigned long)miscConfig.autoArmTimeoutMins * 60000;
