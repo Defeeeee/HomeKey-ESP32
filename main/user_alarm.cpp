@@ -77,6 +77,10 @@ void broadcast_ui_update();
 
 extern "C" void user_alarm_siren_test(bool active) {
     isSirenTestActive = active;
+    if (!active) {
+        dsc.buzzer(0);
+        dsc.beep(0);
+    }
     broadcast_ui_update();
 }
 
@@ -795,16 +799,23 @@ extern "C" void user_alarm_loop() {
     }
 
     // 7. Handle Triggered Siren / Keypad Buzzer Wailing & Physical Siren GPIO Pin
+    static bool wasSirenActive = false;
     static unsigned long last_beep = 0;
     bool sirenActive = (currentMode == TRIGGERED) || isSirenTestActive;
     if (sirenActive) {
-        if (last_beep == 0 || millis() - last_beep > 60000) {
+        if (!wasSirenActive || last_beep == 0 || millis() - last_beep > 60000) {
             Serial.println("📢 !!! SIRENA ACTIVA !!!");
             dsc.buzzer(255); // Keep wailing (renew keepalive every 60s)
             last_beep = millis();
         }
+        wasSirenActive = true;
     } else {
-        last_beep = 0;
+        if (wasSirenActive) {
+            dsc.buzzer(0);
+            dsc.beep(0);
+            wasSirenActive = false;
+            last_beep = 0;
+        }
     }
 
     auto& miscConfig = configManager->getConfig<espConfig::misc_config_t>();
