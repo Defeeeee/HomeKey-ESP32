@@ -13,7 +13,7 @@ This document defines the **standard operating procedure and handoff protocol** 
 | **ESP32 Local IP** | `192.168.68.200` | Fixed local network IP |
 | **Home Assistant IP** | `100.112.141.102:8123` | Tailscale VPN |
 | **MQTT Broker** | `192.168.68.120:1883` | Topic: `home/alarm/#` |
-| **Firmware Branch** | `feature/mock-alarm-arduino` | Repository: `Defeeeee/HomeKey-ESP32` |
+| **Firmware Branch** | `main` | Repository: `Defeeeee/HomeKey-ESP32` |
 | **Mobile App Client** | `vector-security-app` | Repository: `Defeeeee/ESP32-AlarmApp` |
 
 ---
@@ -47,6 +47,13 @@ This document defines the **standard operating procedure and handoff protocol** 
 
 ## 📝 Agent Progress Log & Handoff History
 
+### [2026-07-19] - Antigravity (Google DeepMind Coding Agent)
+- **Incident Investigation & Root Cause Discovery**:
+  - **Issue**: ESP32 Web UI went offline and HA state changed to `unavailable` at 22:20:42 ART (10:20 PM) on July 18, 2026. DSC Keypad showed Trouble LEDs Z3 (MQTT Offline) & Z2 (NFC Bypass).
+  - **Root Cause**: Router/Wi-Fi AP experienced a TCP socket drop while maintaining radio association. The existing Wi-Fi event handler in `main.cpp` required 6 consecutive `ARDUINO_EVENT_WIFI_STA_DISCONNECTED` events, which were never triggered because radio link remained associated.
+  - **Recovery**: User manually restarted ESP32 via DSC Keypad (`*8 -> 5555 -> 9`), which executed `esp_restart()`. The device reconnected immediately at 04:06:51 ART (04:06 AM) and returned 100% online.
+  - **Proposed Fix**: Add a 3-minute continuous MQTT/Wi-Fi disconnect Watchdog to `main.cpp` or `user_alarm.cpp` (`millis() - lastMqttConnectedTime > 180000`) that automatically triggers `esp_restart()` without requiring manual keypad intervention.
+
 ### [2026-07-18] - Antigravity (Google DeepMind Coding Agent)
 - **Features Added**:
   - Implemented Physical Siren Output Relay on **GPIO 26** (`sirenPin = 26`, Active HIGH).
@@ -55,11 +62,7 @@ This document defines the **standard operating procedure and handoff protocol** 
   - Fixed `dsc.buzzer(0)` explicit shutoff on disarm and test release to prevent continuous keypad beeping.
   - Created [PROJECT_SUMMARY.md](file:///Users/defeee/alarma-homekey-arduino/PROJECT_SUMMARY.md) with system architecture, Claude instructions, and Arduino Uno RF decoder code.
   - Established [AGENTS.md](file:///Users/defeee/alarma-homekey-arduino/AGENTS.md) as the standard agent handoff protocol.
-- **Verification**:
-  - Web UI compiled cleanly with `bun run build`.
-  - ESP32 firmware compiled with `idf.py build`.
-  - Both `HomeKey-ESP32.bin` and `spiffs.bin` successfully uploaded via OTA.
-  - All changes committed and pushed to `feature/mock-alarm-arduino`.
+  - Merged and synchronized all branches cleanly into `main`.
 
 ---
 
