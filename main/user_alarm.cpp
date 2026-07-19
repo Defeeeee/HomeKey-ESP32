@@ -1,4 +1,5 @@
 #include "include/user_alarm.h"
+#include "include/EventLog.hpp"
 #include <Arduino.h>
 #include <WiFi.h>
 #include "include/NfcManager.hpp"
@@ -52,6 +53,17 @@ unsigned long entryDelayStartTime = 0;
 const unsigned long ENTRY_DELAY_MS = 15000; // 15 segundos de retardo de entrada
 int lastEntrySecondsLeft = -1;
 AlarmMode armedModeBeforeDelay = ARMED_AWAY;
+
+// MQTT connectivity nudge (NON-REBOOTING by design — see the block in
+// user_alarm_loop()). An earlier version esp_restart()'d here after 3 min without
+// MQTT, which turned ordinary broker outages (Wi-Fi perfectly fine) into an endless
+// reboot loop and made the whole system unstable. We no longer reboot; we only give
+// the Wi-Fi a single gentle kick after a long outage, to recover the rare "zombie"
+// link case (radio associated, data path dead) without touching a healthy system.
+unsigned long lastMqttConnectedTime = 0;
+unsigned long lastWifiNudgeTime = 0;
+const unsigned long MQTT_DOWN_NUDGE_MS = 600000;     // 10 min continuously without MQTT
+const unsigned long WIFI_NUDGE_COOLDOWN_MS = 600000; // at most one Wi-Fi nudge per 10 min
 
 // DSC Keybus Interface Global Instance (Clock: 21, Read: 18, Write: 19)
 dscKeypadInterface dsc(21, 18, 19);
@@ -115,10 +127,43 @@ AlarmMode restore_alarm_state() {
     return DISARMED;
 }
 
+// Event-log source attribution: set at the outermost action entry points
+// (keypad / remote / auto-arm) just before calling arm/disarm; consumed when the
+// resulting ARMED/DISARMED transition is logged in update_current_mode() below.
+static eventlog::Source g_pendingSource = eventlog::Source::SYSTEM;
+static uint8_t g_lastTriggerZone = 0; // zone (1-8) that caused the next TRIGGERED, 0 if unknown
+
 void update_current_mode(AlarmMode mode) {
     if (currentMode != mode) {
         currentMode = mode;
         save_alarm_state(mode);
+
+        // Persistent audit/diagnostic trail. Restore-on-boot sets currentMode
+        // directly (not through this function), so these fire only on real
+        // runtime transitions — never a spurious "armed" event at startup.
+        uint8_t src = static_cast<uint8_t>(g_pendingSource);
+        switch (mode) {
+            case ARMED_AWAY:
+                eventlog::add(eventlog::EventType::ARMED_AWAY, src);
+                g_pendingSource = eventlog::Source::SYSTEM;
+                break;
+            case ARMED_HOME:
+                eventlog::add(eventlog::EventType::ARMED_HOME, src);
+                g_pendingSource = eventlog::Source::SYSTEM;
+                break;
+            case DISARMED:
+                eventlog::add(eventlog::EventType::DISARMED, src);
+                g_pendingSource = eventlog::Source::SYSTEM;
+                break;
+            case ENTRY_DELAY:
+                eventlog::add(eventlog::EventType::ENTRY_DELAY);
+                break;
+            case TRIGGERED:
+                eventlog::add(eventlog::EventType::TRIGGERED, g_lastTriggerZone);
+                break;
+            default:
+                break; // ARMING_AWAY / ARMING_HOME are transient — not logged
+        }
     }
 }
 
@@ -225,6 +270,7 @@ void trigger_zone_change(int zoneIdx, bool isOpen, const char* sourceName) {
     }
 
     if (shouldStartEntryDelay) {
+        g_lastTriggerZone = (uint8_t)zoneId; // so a subsequent entry-timeout TRIGGERED logs this zone
         armedModeBeforeDelay = currentMode;
         update_current_mode(ENTRY_DELAY);
         entryDelayStartTime = millis();
@@ -233,6 +279,7 @@ void trigger_zone_change(int zoneIdx, bool isOpen, const char* sourceName) {
         Serial.printf("\n⏳ [SISTEMA] Puerta principal abierta (%s). INICIANDO RETARDO DE ENTRADA (15s)...\n", sourceName);
     }
     if (shouldTrigger) {
+        g_lastTriggerZone = (uint8_t)zoneId; // record which zone tripped for the event log
         update_current_mode(TRIGGERED);
         zoneAlarmMemory[zoneIdx] = true;
         hasAlarmMemory = true;
@@ -356,6 +403,7 @@ extern "C" void user_alarm_setup() {
     m_remote_event = AppEventLoop::subscribe(ALARM_EVENT, ALARM_SET_REMOTE, [](const uint8_t* data, size_t size){
         if(size == 0) return;
         std::string cmd(reinterpret_cast<const char*>(data), size);
+        g_pendingSource = eventlog::Source::REMOTE; // web UI / HomeKit / MQTT
         if (cmd == "ARMED_AWAY") user_alarm_arm_away();
         else if (cmd == "ARMED_HOME") user_alarm_arm_home();
         else if (cmd == "DISARMED") user_alarm_disarm();
@@ -448,15 +496,60 @@ extern "C" void user_alarm_disarm() {
         print_status();
     }
 }
- 
+
+// Web UI siren-disable toggle. This ONLY ever writes miscConfig.sirenDisabled
+// and persists it — it never touches currentMode, never calls arm/disarm, so
+// it structurally cannot arm (or disarm) the system. The alarm state machine
+// (arming, zone monitoring, TRIGGERED state, MQTT/HomeKit reporting) keeps
+// running exactly as normal; only the audible siren output is gated (see the
+// sirenActive computation in user_alarm_loop()). No auto-expiry: it stays in
+// whatever state the user last set until they toggle it again.
+extern "C" void user_alarm_set_siren_disabled(bool disabled) {
+    configManager->updateFromJson<espConfig::misc_config_t>(
+        std::string("{\"sirenDisabled\":") + (disabled ? "true" : "false") + "}");
+    configManager->saveConfig<espConfig::misc_config_t>();
+    eventlog::add(disabled ? eventlog::EventType::SIREN_DISABLED : eventlog::EventType::SIREN_ENABLED,
+                  static_cast<uint8_t>(eventlog::Source::REMOTE));
+    Serial.printf("\n%s [WEB UI] Sirena %s (el sistema de alarma sigue funcionando con normalidad).\n",
+                  disabled ? "🔇" : "🔊", disabled ? "DESHABILITADA" : "HABILITADA");
+}
+
+extern "C" bool user_alarm_is_siren_disabled() {
+    auto& miscConfig = configManager->getConfig<espConfig::misc_config_t>();
+    return miscConfig.sirenDisabled;
+}
+
+// Milliseconds MQTT has been continuously disconnected (0 if connected or never yet
+// connected). Surfaced in the Web UI health panel. Uses the same lastMqttConnectedTime
+// the connectivity nudge maintains in user_alarm_loop().
+extern "C" unsigned long user_alarm_mqtt_down_ms() {
+    if (mqttManager && mqttManager->isConnected()) return 0;
+    if (lastMqttConnectedTime == 0) return 0;
+    return millis() - lastMqttConnectedTime;
+}
+
 extern "C" void user_alarm_loop() {
     // 1. Maintain Keybus clock (MUST RUN CONSTANTLY)
     dsc.loop();
+
+    // Flush any pending event-log entries to NVS from here (main task, large
+    // stack). eventlog::add() only touches RAM, so this is the single place the
+    // NVS write happens — keeping it off the small-stack Wi-Fi/httpd contexts.
+    {
+        static unsigned long lastEventFlush = 0;
+        if (millis() - lastEventFlush > 2000) {
+            lastEventFlush = millis();
+            eventlog::flush();
+        }
+    }
 
     // 2. Handle Keypad input
     if (dsc.key != 0xFF) {
         lastKeypadActivityTime = millis();
         dsc.lightBacklight = on;
+        // Any arm/disarm triggered while processing a physical keypad key is
+        // attributed to the keypad in the event log (consumed on the transition).
+        g_pendingSource = eventlog::Source::KEYPAD;
         byte rawKey = dsc.key;
         dsc.key = 0xFF; // Clear buffer
         char key = decodeDscKey(rawKey);
@@ -830,7 +923,10 @@ extern "C" void user_alarm_loop() {
 
     auto& miscConfig = configManager->getConfig<espConfig::misc_config_t>();
     if (miscConfig.sirenPin != 255) {
-        digitalWrite(miscConfig.sirenPin, sirenActive ? (miscConfig.sirenActiveHigh ? HIGH : LOW) : (miscConfig.sirenActiveHigh ? LOW : HIGH));
+        // Web UI siren-disable toggle gates ONLY this physical relay output.
+        // currentMode/TRIGGERED/arming logic above is untouched and keeps running normally.
+        bool sirenOutputActive = sirenActive && !miscConfig.sirenDisabled;
+        digitalWrite(miscConfig.sirenPin, sirenOutputActive ? (miscConfig.sirenActiveHigh ? HIGH : LOW) : (miscConfig.sirenActiveHigh ? LOW : HIGH));
     }
 
     // 8. Synchronize physical keypad LEDs with system state in real-time
@@ -951,6 +1047,36 @@ extern "C" void user_alarm_loop() {
         dsc.lightTrouble = hasTrouble ? on : off;
     }
 
+    // Log MQTT connectivity edges (up/down) to the persistent event log so an
+    // overnight broker/network outage is visible after the fact.
+    {
+        static int8_t mqttWas = -1; // -1 unknown, 0 down, 1 up
+        int8_t mqttNow = (mqttManager && mqttManager->isConnected()) ? 1 : 0;
+        if (mqttWas != -1 && mqttNow != mqttWas) {
+            eventlog::add(mqttNow ? eventlog::EventType::MQTT_UP : eventlog::EventType::MQTT_LOST);
+        }
+        mqttWas = mqttNow;
+    }
+
+    // MQTT connectivity nudge. The ESP-IDF MQTT client already auto-reconnects on its
+    // own, so ordinary broker/network blips recover without our help — we must NOT
+    // reboot for those (doing so just loops forever while the broker is down). The only
+    // case that needs a push is a "zombie" Wi-Fi link (radio associated, data path dead)
+    // that fires no disconnect event. So after a long *continuous* MQTT outage with
+    // Wi-Fi still claiming to be connected, force ONE non-destructive Wi-Fi reconnect
+    // and back off. This never calls esp_restart().
+    if (mqttManager && mqttManager->isConnected()) {
+        lastMqttConnectedTime = millis();
+    } else if (lastMqttConnectedTime == 0) {
+        lastMqttConnectedTime = millis(); // Don't count time before the first connection.
+    } else if (millis() - lastMqttConnectedTime > MQTT_DOWN_NUDGE_MS
+               && WiFi.isConnected()
+               && millis() - lastWifiNudgeTime > WIFI_NUDGE_COOLDOWN_MS) {
+        lastWifiNudgeTime = millis();
+        Serial.println("📶 [MQTT] Sin MQTT >10min con WiFi asociado. Forzando reconexión WiFi (SIN reiniciar).");
+        WiFi.reconnect();
+    }
+
     // Auto-Backlight Dimming (30-second timeout, only when DISARMED or ARMED)
     if (currentMode == DISARMED || currentMode == ARMED_AWAY || currentMode == ARMED_HOME) {
         if (millis() - lastKeypadActivityTime > 30000) {
@@ -985,6 +1111,7 @@ extern "C" void user_alarm_loop() {
                 memset(zoneAlarmMemory, 0, sizeof(zoneAlarmMemory));
                 hasAlarmMemory = false;
 
+                g_pendingSource = eventlog::Source::AUTO; // no-motion auto-arm
                 if (miscConfig.autoArmMode == 0) {
                     update_current_mode(ARMED_HOME);
                     mqtt_publish_state("armed_home");

@@ -290,6 +290,19 @@
     }
   }
 
+  function toggleSirenDisabled() {
+    const nextDisabled = !(systemInfo?.siren_disabled ?? false);
+    if (nextDisabled && !confirm('¿Deshabilitar la sirena física (Pin 26)? El sistema de alarma sigue armando, desarmando y detectando zonas con total normalidad — solo no va a sonar hasta que la vuelvas a habilitar acá. No se reactiva sola.')) {
+      return;
+    }
+    if (ws && ws.connected) {
+      ws.send({ type: 'set_siren_disabled', disabled: nextDisabled });
+    } else if (isSimMode) {
+      if (systemInfo) systemInfo.siren_disabled = nextDisabled;
+      addSimLog(`Sirena física ${nextDisabled ? 'DESHABILITADA' : 'HABILITADA'} (simulado)`, 3, 'SIMULATOR');
+    }
+  }
+
   function toggleBypass(index: number) {
     const isBypassed = alarm_bypassed[index];
     if (ws && ws.connected) {
@@ -673,6 +686,31 @@
               class="btn btn-xs rounded-xl font-bold uppercase tracking-wider transition-all duration-200 {systemInfo?.siren_active ? 'btn-error shadow-[0_0_15px_rgba(239,68,68,0.4)]' : 'btn-outline border-white/20 text-slate-300 hover:bg-rose-500/20 hover:text-rose-300 hover:border-rose-500/40'}"
             >
               {systemInfo?.siren_active ? '🔊 Probando...' : 'Probador N.O.'}
+            </button>
+          </div>
+
+          <!-- Siren Disable Toggle (Web UI, mutes GPIO 26 relay only, never touches arm/disarm state, no auto-expiry) -->
+          <div class="mt-4 pt-4 border-t border-white/5 flex items-center justify-between gap-3">
+            <div class="flex items-center gap-2.5">
+              <div class="p-2 rounded-xl {systemInfo?.siren_disabled ? 'bg-amber-500/20 text-amber-400' : 'bg-slate-800 text-slate-400'}">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2M9 9v6m0-6L4.5 6.5A1 1 0 003 7.4v9.2a1 1 0 001.5.9L9 15m0-6h4.5a2.5 2.5 0 010 5H9" />
+                </svg>
+              </div>
+              <div>
+                <div class="text-xs font-semibold text-slate-200">Sirena Física (Pin 26)</div>
+                <div class="text-[10px] text-slate-400">
+                  {systemInfo?.siren_disabled
+                    ? 'Deshabilitada — la alarma sigue armando/detectando con normalidad, no vuelve a activarse sola'
+                    : 'Habilitada — suena normalmente en TRIGGERED o prueba'}
+                </div>
+              </div>
+            </div>
+            <button
+              onclick={toggleSirenDisabled}
+              class="btn btn-xs rounded-xl font-bold uppercase tracking-wider transition-all duration-200 {systemInfo?.siren_disabled ? 'btn-warning shadow-[0_0_15px_rgba(245,158,11,0.4)]' : 'btn-outline border-white/20 text-slate-300 hover:bg-amber-500/20 hover:text-amber-300 hover:border-amber-500/40'}"
+            >
+              {systemInfo?.siren_disabled ? '🔇 Deshabilitada' : 'Deshabilitar Sirena'}
             </button>
           </div>
         </div>

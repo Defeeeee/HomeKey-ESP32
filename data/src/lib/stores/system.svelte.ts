@@ -15,7 +15,12 @@ export type SystemInfo = {
   alarm_state: string,
   alarm_zones: boolean[],
   alarm_bypassed: boolean[],
-  alarm_disabled: boolean[]
+  alarm_disabled: boolean[],
+  siren_active?: boolean,
+  siren_testing?: boolean,
+  siren_disabled?: boolean,
+  mqtt_down_ms?: number,
+  reset_reason?: string
 };
 
 export const systemInfo : SystemInfo = $state({
