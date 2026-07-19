@@ -36,6 +36,8 @@
 #include <cstring>
 #include <dirent.h>
 #include <esp_app_desc.h>
+#include <esp_system.h>
+#include "include/EventLog.hpp"
 #include <mutex>
 #include <esp_tls_crypto.h>
 #include <stdbool.h>
@@ -2004,7 +2006,23 @@ esp_err_t WebServerManager::handleWebSocketMessage(httpd_req_t *req,
     bool active = active_item ? cJSON_IsTrue(active_item) : true;
     user_alarm_siren_test(active);
     response = getDeviceMetrics();
-  } else if (msg_type == "set_log_level") {  
+  } else if (msg_type == "set_siren_disabled") {
+    // Gates ONLY the physical siren relay output (see user_alarm_loop()'s
+    // sirenOutputActive computation) — never touches currentMode, never calls
+    // arm/disarm. The alarm state machine keeps arming/triggering/reporting
+    // normally; this just mutes the audible siren, persistently, until toggled back.
+    cJSON *disabled_item = cJSON_GetObjectItem(json, "disabled");
+    bool disabled = disabled_item ? cJSON_IsTrue(disabled_item) : true;
+    user_alarm_set_siren_disabled(disabled);
+    ESP_LOGI("WS_ALARM", "Siren disabled=%d via WS", disabled);
+    response = getDeviceMetrics();
+  } else if (msg_type == "get_event_log") {
+    response = "{\"type\":\"event_log\",\"events\":" + eventlog::toJson() + "}";
+  } else if (msg_type == "clear_event_log") {
+    eventlog::clear();
+    ESP_LOGI("WS_ALARM", "Event log cleared via WS");
+    response = "{\"type\":\"event_log\",\"events\":" + eventlog::toJson() + "}";
+  } else if (msg_type == "set_log_level") {
     cJSON *level_item = cJSON_GetObjectItem(json, "data");
     if(level_item && cJSON_IsNumber(level_item)) {
       esp_log_level_t level = esp_log_level_t(level_item->valueint >= 0 && level_item->valueint < 6 ? level_item->valueint : ESP_LOG_WARN);
@@ -2050,6 +2068,24 @@ std::string WebServerManager::getDeviceMetrics() {
   cJSON_AddBoolToObject(status, "siren_testing", user_alarm_is_siren_testing());
   std::string currentAlarmState = user_alarm_get_state_string();
   cJSON_AddBoolToObject(status, "siren_active", (currentAlarmState == "triggered" || user_alarm_is_siren_testing()));
+  cJSON_AddBoolToObject(status, "siren_disabled", user_alarm_is_siren_disabled());
+  cJSON_AddNumberToObject(status, "mqtt_down_ms", (double)user_alarm_mqtt_down_ms());
+  {
+    const char* rr;
+    switch (esp_reset_reason()) {
+      case ESP_RST_POWERON:  rr = "POWERON";  break;
+      case ESP_RST_EXT:      rr = "EXT";      break;
+      case ESP_RST_SW:       rr = "SW";       break;
+      case ESP_RST_PANIC:    rr = "PANIC";    break;
+      case ESP_RST_INT_WDT:  rr = "INT_WDT";  break;
+      case ESP_RST_TASK_WDT: rr = "TASK_WDT"; break;
+      case ESP_RST_WDT:      rr = "WDT";      break;
+      case ESP_RST_BROWNOUT: rr = "BROWNOUT"; break;
+      case ESP_RST_DEEPSLEEP:rr = "DEEPSLEEP";break;
+      default:               rr = "UNKNOWN";  break;
+    }
+    cJSON_AddStringToObject(status, "reset_reason", rr);
+  }
   cJSON *zones = cJSON_CreateArray();
   for (int i = 1; i <= 8; i++) {
     cJSON_AddItemToArray(zones, cJSON_CreateBool(user_alarm_get_sensor_state(i)));

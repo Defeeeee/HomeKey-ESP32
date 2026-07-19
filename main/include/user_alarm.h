@@ -6,6 +6,9 @@ extern "C" {
 void user_alarm_setup();
 void user_alarm_loop();
 void user_alarm_disarm();
+void user_alarm_set_siren_disabled(bool disabled);
+bool user_alarm_is_siren_disabled();
+unsigned long user_alarm_mqtt_down_ms();
 void user_alarm_arm_away();
 void user_alarm_arm_home();
 void user_alarm_failed_tap();
