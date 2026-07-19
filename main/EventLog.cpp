@@ -38,6 +38,7 @@ struct Ring {
 std::mutex g_mutex;
 Ring g_ring{};
 bool g_ready = false;
+bool g_dirty = false; // RAM ring has unsaved changes; flushed from the main task
 
 void persistLocked() {
   nvs_handle_t handle;
@@ -55,6 +56,11 @@ void persistLocked() {
   nvs_close(handle);
 }
 
+// RAM-only: never touches NVS, so it is safe to call from any context (main
+// loop, Wi-Fi event task, httpd task). Persistence is deferred to flush(), which
+// runs from the main task where the stack is large. Doing NVS work here — e.g.
+// from the small-stack Wi-Fi event handler — was the suspected cause of PANIC
+// reboots, so keep this cheap and non-blocking.
 void addLocked(uint8_t type, uint8_t arg) {
   Entry& slot = g_ring.entries[g_ring.head];
   slot.ts = static_cast<uint32_t>(time(nullptr));
@@ -62,7 +68,7 @@ void addLocked(uint8_t type, uint8_t arg) {
   slot.arg = arg;
   g_ring.head = (g_ring.head + 1) % RING_CAPACITY;
   if (g_ring.count < RING_CAPACITY) g_ring.count++;
-  persistLocked();
+  g_dirty = true;
 }
 
 }  // namespace
@@ -89,14 +95,28 @@ void begin() {
   g_ready = true;
 
   // Record why we (re)booted so a crash/watchdog is visible after the fact.
+  // begin() runs in the app-main/setup task (ample stack), so persisting the
+  // BOOT event to NVS right here is safe and guarantees it survives immediately.
   addLocked(static_cast<uint8_t>(EventType::BOOT),
             static_cast<uint8_t>(esp_reset_reason()));
+  persistLocked();
+  g_dirty = false;
 }
 
 void add(EventType type, uint8_t arg) {
   std::lock_guard<std::mutex> lock(g_mutex);
   if (!g_ready) return;
   addLocked(static_cast<uint8_t>(type), arg);
+}
+
+// Persist the RAM ring to NVS if it changed. MUST be called only from the main
+// task (large stack) — this is where the one NVS write per batch of events
+// happens, keeping heavy/blocking work off the Wi-Fi-event and httpd tasks.
+void flush() {
+  std::lock_guard<std::mutex> lock(g_mutex);
+  if (!g_dirty) return;
+  persistLocked();
+  g_dirty = false;
 }
 
 std::string toJson() {
@@ -123,7 +143,7 @@ void clear() {
   std::lock_guard<std::mutex> lock(g_mutex);
   std::memset(&g_ring, 0, sizeof(g_ring));
   g_ring.magic = RING_MAGIC;
-  persistLocked();
+  g_dirty = true; // deferred to flush() from the main task (no NVS in caller context)
 }
 
 }  // namespace eventlog

@@ -44,6 +44,11 @@ void begin();
 // renders as a relative time. Thread-safe; persists to NVS.
 void add(EventType type, uint8_t arg = 0);
 
+// Persist the RAM ring to NVS if it changed since the last flush. Call ONLY from
+// the main loop task (large stack) — add() itself never writes NVS, so heavy work
+// stays off the small-stack Wi-Fi-event and httpd tasks. Cheap no-op when clean.
+void flush();
+
 // Serialize the whole ring as a JSON array, newest entry first:
 //   [{ "ts": <uint32>, "type": <uint8>, "arg": <uint8> }, ...]
 std::string toJson();

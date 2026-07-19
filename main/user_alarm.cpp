@@ -532,6 +532,17 @@ extern "C" void user_alarm_loop() {
     // 1. Maintain Keybus clock (MUST RUN CONSTANTLY)
     dsc.loop();
 
+    // Flush any pending event-log entries to NVS from here (main task, large
+    // stack). eventlog::add() only touches RAM, so this is the single place the
+    // NVS write happens — keeping it off the small-stack Wi-Fi/httpd contexts.
+    {
+        static unsigned long lastEventFlush = 0;
+        if (millis() - lastEventFlush > 2000) {
+            lastEventFlush = millis();
+            eventlog::flush();
+        }
+    }
+
     // 2. Handle Keypad input
     if (dsc.key != 0xFF) {
         lastKeypadActivityTime = millis();
