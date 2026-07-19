@@ -24,7 +24,9 @@
 #include "loggable.hpp"
 #include "loggable_espidf.hpp"
 #include "WebSocketLogSinker.h"
+#include "EventLog.hpp"
 #include "lwip/inet.h"
+#include <ctime>
 
 std::unique_ptr<LockManager> lockManager;
 std::unique_ptr<ReaderDataManager> readerDataManager;
@@ -113,6 +115,9 @@ void setup() {
   readerDataManager = std::make_unique<ReaderDataManager>();
   configManager = std::make_unique<ConfigManager>();
   configManager->begin();
+  // Persistent event log (survives reboots) — start it right after NVS is up so
+  // the very first thing recorded is this boot and why we rebooted (reset reason).
+  eventlog::begin();
   esp_log_level_set("*", static_cast<esp_log_level_t>(configManager->getConfig<espConfig::misc_config_t>().logLevel));
   loggable::Sinker::instance().set_level((loggable::LogLevel)configManager->getConfig<espConfig::misc_config_t>().logLevel);
   webServerManager = std::make_unique<WebServerManager>(*configManager, *readerDataManager);
@@ -189,9 +194,18 @@ void setup() {
   lockManager->begin();
   WiFi.onEvent([](arduino_event_id_t event){
     wifiDisconnectCount = 0;
+    eventlog::add(eventlog::EventType::WIFI_UP);
+    // Start SNTP once we have IP so the event log gets real wall-clock timestamps
+    // (device has no RTC). AR is UTC-3; we store UTC epochs and format locally in the UI.
+    static bool sntpStarted = false;
+    if (!sntpStarted) {
+      configTime(-3 * 3600, 0, "pool.ntp.org", "time.google.com");
+      sntpStarted = true;
+    }
   }, ARDUINO_EVENT_WIFI_STA_GOT_IP);
 
   WiFi.onEvent([](arduino_event_id_t event){
+    eventlog::add(eventlog::EventType::WIFI_LOST);
     if(wifiDisconnectCount >= 6){
       ESP_LOGE("Main", "Wi-Fi disconnected 6 times consecutively. Restarting system...");
       vTaskDelay(pdMS_TO_TICKS(100));

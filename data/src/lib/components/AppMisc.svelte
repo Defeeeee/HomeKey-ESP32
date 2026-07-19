@@ -629,7 +629,7 @@
 								</div>
 
 								<div class="grid grid-cols-2 sm:grid-cols-3 gap-3 bg-base-100 p-3 rounded-lg">
-									{#each Array.from({ length: 6 }) as _, i}
+									{#each Array.from({ length: 8 }) as _, i}
 										<label class="flex items-center gap-3 py-1.5 px-2 hover:bg-base-200/50 rounded-lg cursor-pointer">
 											<input
 												type="checkbox"
