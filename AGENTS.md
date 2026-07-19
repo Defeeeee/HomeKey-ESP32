@@ -47,6 +47,22 @@ This document defines the **standard operating procedure and handoff protocol** 
 
 ## 📝 Agent Progress Log & Handoff History
 
+### [2026-07-19] - Claude (Opus 4.8) → 🅰️ ANTIGRAVITY: REVIEW REQUESTED (post-#5 PANIC + proposed fix)
+
+@Antigravity — the user asked me to run my approach past you before we call this done. Here's the situation and my fix; please weigh in on the questions at the bottom.
+
+**What happened.** After PR #5 (persistent event log) was flashed, the device took **2 PANIC reboots** (`esp_reset_reason() == ESP_RST_PANIC`), ~14 min then ~11 min apart, then went stable. It was NOT panicking before that flash (prior reboots were `SW` from the old MQTT watchdog, since removed). So the new firmware is the cause. The event log itself captured the panics (BOOT events with `arg=4`), but we have **no backtrace**: `CONFIG_ESP_COREDUMP_ENABLE_TO_NONE=y` and the partition table (`with_ota.csv`) is full (~3.94/4 MB), so coredump-to-flash can't be added without a partition change (serial flash, not OTA).
+
+**My root-cause hypothesis (unconfirmed, no backtrace).** `eventlog::add()` wrote the ~400-byte ring to **NVS on every event**, and several events are logged from the **Wi-Fi event handler** (`ARDUINO_EVENT_WIFI_STA_GOT_IP` / `_DISCONNECTED` lambdas in `main.cpp`), which runs on a small-stack task. A blocking NVS write there can overflow that stack → PANIC. Fits the evidence: no event was logged immediately before either panic (crashed *while* persisting).
+
+**My fix (PR #6, `fix/eventlog-panic-nvs-context`).** Decouple RAM update from persistence: `eventlog::add()` now only mutates the in-RAM ring + sets a dirty flag (safe from any context); a new `eventlog::flush()` does the single NVS write and is called **only from `user_alarm_loop()`** (main task, large stack), throttled to 1×/2 s. `clear()` defers too; `begin()` still persists the BOOT event inline (setup task = safe). Net: zero NVS/blocking work on the Wi-Fi-event and httpd tasks.
+
+**Questions for you:**
+1. Do you agree the small-stack NVS write is the likely PANIC cause, or do you see a better suspect (e.g. `configTime()` called from the `GOT_IP` handler, the `std::mutex` usage in `EventLog.cpp`, or cJSON in `toJson()` under low heap)?
+2. Is the deferred-flush (RAM add + main-task flush) the right shape, or would you prefer a dedicated FreeRTOS task + queue for the log, or moving persistence entirely off the hot path another way?
+3. Is it worth repartitioning to add a coredump partition (serial-flash, one-time) so future panics give a real backtrace? Or too risky/not worth it for this device?
+4. Any concern with `configTime()` living in the `GOT_IP` event handler vs. moving it to a task?
+
 ### [2026-07-19] - Claude (Opus 4.8) — Session 4 (persistent event log + diagnostics + 8-zone Home)
 - **Summary of Changes**:
   - **Persistent event log** ([EventLog.hpp](file:///Users/defeee/alarma-homekey-arduino/main/include/EventLog.hpp) / [EventLog.cpp](file:///Users/defeee/alarma-homekey-arduino/main/EventLog.cpp)): a 48-entry ring buffer of `{ts,type,arg}` stored as ONE NVS blob in namespace `eventlog` (no partition change — the table is full). Survives reboots. On boot it records a `BOOT` event carrying `esp_reset_reason()`, so a future PANIC/watchdog is visible after the fact without a serial cable — the exact blind spot from Session 3's overnight incident.
