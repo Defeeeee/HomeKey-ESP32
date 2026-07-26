@@ -5,10 +5,13 @@
   import { systemInfo } from "$lib/stores/system.svelte.js";
   import { events, setEvents, formatEvent } from "$lib/stores/eventlog.svelte.js";
 
-  const names = [
-    "Main Door", "Living Room Motion Sensor", "Window Flap A", "Window Flap B",
-    "Upstairs Curtain", "Zone 6", "Zone 7", "Zone 8"
-  ];
+  // Zone labels come from the device config (editable in System settings), with a
+  // generic fallback for older firmware that doesn't publish them yet.
+  let names = $derived(
+    systemInfo.zone_names?.length === 8
+      ? systemInfo.zone_names
+      : Array.from({ length: 8 }, (_, i) => `Zona ${i + 1}`)
+  );
 
   let wsUnsubscribe: (() => void) | undefined;
 
@@ -17,7 +20,7 @@
   }
 
   function clearLog() {
-    if (!confirm("¿Borrar el historial persistente de eventos del dispositivo? No se puede deshacer.")) return;
+    if (!confirm("¿Borrar el historial de eventos? No se puede deshacer.")) return;
     if (ws && ws.connected) ws.send({ type: "clear_event_log" });
   }
 
@@ -132,7 +135,7 @@
       <div class="bg-[#0e0e15]/40 border border-white/5 rounded-xl p-2.5">
         <h3 class="font-bold text-slate-300 mb-1.5 flex items-center gap-1.5">
           Historial persistente
-          <span class="text-[9px] font-normal text-slate-500">(sobrevive reinicios · {events.length})</span>
+          <span class="text-[9px] font-normal text-slate-500">(persistente · {events.length})</span>
         </h3>
         <div class="space-y-1 max-h-96 overflow-y-auto">
           {#each events as e}
@@ -145,7 +148,7 @@
               </div>
             </div>
           {:else}
-            <div class="text-slate-500 text-[10px] p-2 text-center">Sin eventos registrados todavía.</div>
+            <div class="text-slate-500 text-[10px] p-2 text-center">Sin eventos.</div>
           {/each}
         </div>
       </div>

@@ -55,6 +55,22 @@ This document defines the **standard operating procedure and handoff protocol** 
 
 ## 📝 Agent Progress Log & Handoff History
 
+### [2026-07-26] - Claude (Opus 5) — Session 7 (secrets, siren cutoff, configurable delays, zone names)
+
+- **🔒 The config API no longer leaks the alarm PIN.** `GET /config?type=misc` returned `alarmCode` in plaintext, and `webAuthEnabled` is `false` — so anyone who could reach the device (LAN or Tailscale) could read the PIN and disarm. `alarmCode` is now masked like the existing password fields (`isSecretKey()` in [ConfigManager.cpp](file:///Users/defeee/alarma-homekey-arduino/main/ConfigManager.cpp)). `setupCode` is deliberately left readable — the UI must display it for HomeKit pairing.
+  - **Also fixed a latent bug this exposed**: `updateFromJson` wrote incoming strings unconditionally, so a masked value echoed back would have overwritten the real secret with `********`. It now ignores masked values for secret keys — this protected `otaPasswd`/`webPassword` too, which were already masked on read but unguarded on write.
+  - Frontend: the PIN input is now write-only (`newAlarmCode`, starts empty, only sent when typed). **Note the trap**: the UI validates "exactly 4 digits" whenever the field is non-empty, so binding it directly to the masked value would have blocked saving *every* setting on the page.
+- **🔇 Siren auto-cutoff**: new `sirenTimeoutMins` (default 5, 0 = never). After the timeout the sounder and relay go quiet **while the system stays TRIGGERED** — state machine, MQTT and HomeKit are untouched. Only a real trigger is cut short; the manual siren test is user-held and exempt. Logged as `SIREN_CUTOFF` (event type 15).
+- **⏱ Entry/exit delays configurable**: `entryDelaySecs` / `exitDelaySecs` (default 15) replace the hardcoded `ENTRY_DELAY_MS`/`EXIT_DELAY_MS`. Read through `entry_delay_ms()`/`exit_delay_ms()` so a change applies without a reboot.
+- **🏷 Editable zone names**: `zoneName1..8` in config, edited in System settings (merged into the existing armed-home zone grid). Used by the Web UI (`zone_names` in the WS metrics) **and by the Home Assistant MQTT discovery payloads**, so renaming a zone renames the HA entity. Verified live: HA entities now read "Puerta Principal", "DSC Inalambrico", etc.
+- **Verification**: built, OTA-flashed (firmware + littlefs), device back online. Confirmed on the live device that `alarmCode` returns `********`, the new config fields are present, `zone_names` reaches the WS metrics, and the HA discovery topics carry the new names.
+
+- **⚠️ THE WEB UI HAS HIT THE LittleFS PARTITION LIMIT — read this before adding any UI.**
+  - The `spiffs` partition is **128 KB** and is now effectively full. Measured empirically (binary search with `littlefs-python`, not estimated): with the current CSS the **maximum size for `index.js.gz` is ~85,820 bytes**. This session's UI additions came to 85,925 and the build failed with `LFS_ERR_NOSPC`; ~105 bytes had to be shaved out of help strings to fit.
+  - Practical consequences: **every new UI feature now requires removing something else.** Watch out for accidental CSS growth too — using a new utility class (`input-xs`) added 33 bytes of CSS and ate into the JS budget.
+  - **Firmware is NOT constrained**: app is 1.75 MB of a 1.875 MB partition, ~213 KB free (11%). Firmware-only features can keep shipping over OTA indefinitely.
+  - **The real fix is repartitioning.** The 4 MB flash is fully allocated (nvs + otadata + app0 + app1 + spiffs end exactly at 0x400000), so `spiffs` can only grow by shrinking `app0`/`app1`. Taking 64 KB from each app leaves them ~146 KB free (7.7%) and doubles `spiffs` to 256 KB. **This cannot be done over OTA** — it needs a USB serial flash of bootloader + partition table + app + spiffs. Bundle it with the next time the device is physically accessible.
+
 ### [2026-07-26] - Claude (Opus 5) — Session 6 (Zone 5 root-caused & fixed: DSC decoder reframed)
 
 - **Zone 5 "stuck open" — root cause found and fixed.** The DSC path had always used a **continuous, unframed rolling-buffer matcher**: it shifted one bit per pulse edge and compared the whole 32-bit window against 9 hardcoded codes. With no framing there is nothing to reject ambient 433 MHz noise. The arithmetic explains the symptom exactly: ~1000 edges/s × 9 codes ≈ **7.8×10⁸ comparisons/day** against a 2³² space → a coincidental "open" match **every few days**, which then latched the output HIGH forever (nothing ever reset it). The WS1000 path never did this because it frames on the sync gap.

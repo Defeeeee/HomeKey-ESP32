@@ -2103,6 +2103,16 @@ std::string WebServerManager::getDeviceMetrics() {
     cJSON_AddItemToArray(disabled, cJSON_CreateBool(user_alarm_is_zone_disabled(i)));
   }
   cJSON_AddItemToObject(status, "alarm_disabled", disabled);
+
+  // Editable zone labels, so the UI doesn't have to hardcode them.
+  {
+    const auto& misc = m_configManager.getConfig<espConfig::misc_config_t>();
+    cJSON *names = cJSON_CreateArray();
+    for (int i = 0; i < 8; i++) {
+      cJSON_AddItemToArray(names, cJSON_CreateString(misc.zoneName(i).c_str()));
+    }
+    cJSON_AddItemToObject(status, "zone_names", names);
+  }
   
   return cjson_to_string_and_free(status);
 }

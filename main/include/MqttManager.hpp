@@ -116,6 +116,8 @@ private:
     const espConfig::mqtt_ssl_t& m_mqttSslConfig;
     esp_mqtt_client_handle_t m_client;
     const std::string &device_name;
+    // Needed for the editable zone labels used in Home Assistant discovery.
+    const espConfig::misc_config_t &m_miscConfig;
     bool m_isConnected = false;
     
     // SSL/TLS related members

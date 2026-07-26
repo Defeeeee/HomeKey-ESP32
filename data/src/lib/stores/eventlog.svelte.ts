@@ -31,6 +31,7 @@ export const EVENT = {
   SIREN_ENABLED: 12,
   AUTO_BYPASS: 13,
   BYPASS_RESTORE: 14,
+  SIREN_CUTOFF: 15,
 } as const;
 
 const SOURCE_LABEL = ["sistema", "teclado", "remoto", "auto"];
@@ -74,13 +75,13 @@ export function formatEvent(e: RawEvent): FormattedEvent {
     case EVENT.DISARMED:
       return { icon: "🔓", label: "Desarmado", detail: src(e.arg), tone: "good", time };
     case EVENT.ENTRY_DELAY:
-      return { icon: "⏳", label: "Retardo de entrada", detail: "puerta abierta", tone: "warn", time };
+      return { icon: "⏳", label: "Retardo de entrada", detail: "", tone: "warn", time };
     case EVENT.TRIGGERED:
-      return { icon: "🚨", label: "ALARMA DISPARADA", detail: e.arg ? `zona ${e.arg}` : "zona ?", tone: "bad", time };
+      return { icon: "🚨", label: "ALARMA DISPARADA", detail: e.arg ? `zona ${e.arg}` : "", tone: "bad", time };
     case EVENT.MQTT_LOST:
       return { icon: "📡", label: "MQTT caído", detail: "", tone: "warn", time };
     case EVENT.MQTT_UP:
-      return { icon: "📡", label: "MQTT reconectado", detail: "", tone: "good", time };
+      return { icon: "📡", label: "MQTT OK", detail: "", tone: "good", time };
     case EVENT.WIFI_LOST:
       return { icon: "📶", label: "WiFi caído", detail: "", tone: "warn", time };
     case EVENT.WIFI_UP:
@@ -90,10 +91,12 @@ export function formatEvent(e: RawEvent): FormattedEvent {
     case EVENT.SIREN_ENABLED:
       return { icon: "🔊", label: "Sirena habilitada", detail: src(e.arg), tone: "good", time };
     case EVENT.AUTO_BYPASS:
-      return { icon: "🚪", label: "Auto-bypass al armar", detail: e.arg ? `zona ${e.arg} abierta` : "", tone: "warn", time };
+      return { icon: "🚪", label: "Auto-bypass", detail: e.arg ? `zona ${e.arg}` : "", tone: "warn", time };
     case EVENT.BYPASS_RESTORE:
-      return { icon: "✅", label: "Zona reactivada", detail: e.arg ? `zona ${e.arg} cerrada` : "", tone: "good", time };
+      return { icon: "✅", label: "Zona reactivada", detail: e.arg ? `zona ${e.arg}` : "", tone: "good", time };
+    case EVENT.SIREN_CUTOFF:
+      return { icon: "🔇", label: "Sirena cortada", detail: e.arg ? `tras ${e.arg} min` : "", tone: "warn", time };
     default:
-      return { icon: "•", label: `Evento ${e.type}`, detail: `arg ${e.arg}`, tone: "normal", time };
+      return { icon: "•", label: `Evento ${e.type}`, detail: "", tone: "normal", time };
   }
 }
