@@ -29,6 +29,8 @@ export const EVENT = {
   WIFI_UP: 10,
   SIREN_DISABLED: 11,
   SIREN_ENABLED: 12,
+  AUTO_BYPASS: 13,
+  BYPASS_RESTORE: 14,
 } as const;
 
 const SOURCE_LABEL = ["sistema", "teclado", "remoto", "auto"];
@@ -87,6 +89,10 @@ export function formatEvent(e: RawEvent): FormattedEvent {
       return { icon: "🔇", label: "Sirena deshabilitada", detail: src(e.arg), tone: "warn", time };
     case EVENT.SIREN_ENABLED:
       return { icon: "🔊", label: "Sirena habilitada", detail: src(e.arg), tone: "good", time };
+    case EVENT.AUTO_BYPASS:
+      return { icon: "🚪", label: "Auto-bypass al armar", detail: e.arg ? `zona ${e.arg} abierta` : "", tone: "warn", time };
+    case EVENT.BYPASS_RESTORE:
+      return { icon: "✅", label: "Zona reactivada", detail: e.arg ? `zona ${e.arg} cerrada` : "", tone: "good", time };
     default:
       return { icon: "•", label: `Evento ${e.type}`, detail: `arg ${e.arg}`, tone: "normal", time };
   }

@@ -195,6 +195,7 @@ namespace espConfig
     bool autoArmEnabled = false;
     uint16_t autoArmTimeoutMins = 120;
     uint8_t autoArmMode = 0;
+    bool autoArmForceBypass = false; // arm even with zones open, auto-bypassing them
     uint8_t armedHomeZones = 0xFF;
     uint8_t dscClockPin = 21;
     uint8_t dscReadPin = 18;

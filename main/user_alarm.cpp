@@ -71,6 +71,9 @@ unsigned long lastKeypadBeepTime = 0;
 std::string keypadPinBuffer = "";
 bool isCommandMode = false;
 bool zoneBypassed[8] = {false, false, false, false, false, false, false, false};
+// Zones auto-bypassed by force auto-arm (were open at arm time). Tracked separately
+// from manual bypasses so we only auto-restore (un-bypass) these when they close.
+bool autoBypassedZones[8] = {false, false, false, false, false, false, false, false};
 bool chimeEnabled = false;
 bool zoneAlarmMemory[8] = {false, false, false, false, false, false, false, false};
 bool hasAlarmMemory = false;
@@ -223,7 +226,19 @@ void trigger_zone_change(int zoneIdx, bool isOpen, const char* sourceName) {
     Serial.printf("⚡ [%s] Cambio en Zona %d: %s\n", sourceName, zoneId, isOpen ? "OPEN" : "CLOSED");
     broadcast_ui_update();
 
-    // If the zone is bypassed, do NOT trigger any alarm/chime logic!
+    // Auto-restore: a zone that force-auto-arm bypassed (because it was open at arm
+    // time) clears its own bypass once it finally closes, so the forgotten door/window
+    // becomes protected again automatically — no manual action needed.
+    if (zoneBypassed[zoneIdx] && autoBypassedZones[zoneIdx] && !isOpen) {
+        user_alarm_set_zone_bypass(zoneIdx, false);
+        autoBypassedZones[zoneIdx] = false;
+        eventlog::add(eventlog::EventType::BYPASS_RESTORE, (uint8_t)zoneId);
+        Serial.printf("✅ [AUTO-PROTECT] Zona %d cerrada -> bypass removido, zona activa de nuevo.\n", zoneId);
+        broadcast_ui_update();
+        return; // just closed; now active for any future opening
+    }
+
+    // If the zone is (still) bypassed, do NOT trigger any alarm/chime logic!
     if (zoneBypassed[zoneIdx]) {
         Serial.printf("ℹ️ [SISTEMA] Zona %d está anulada (bypassed). Ignorando lógica de alarma.\n", zoneId);
         return;
@@ -481,9 +496,10 @@ extern "C" void user_alarm_disarm() {
         // Play double confirmation beep
         dsc.beep(2);
  
-        // Clear bypasses on disarm
+        // Clear bypasses on disarm (both manual and auto-arm bypasses)
         for (int i = 0; i < 8; i++) {
             user_alarm_set_zone_bypass(i, false);
+            autoBypassedZones[i] = false;
         }
         // Reset sub-modes to ensure we aren't stuck in menus
         isBypassMode = false;
@@ -1101,12 +1117,32 @@ extern "C" void user_alarm_loop() {
 
             lastSystemActivityTime = millis(); // Reset to wait next timeout if arming fails/succeeds
 
-            if (anyZoneOpen) {
+            if (anyZoneOpen && !miscConfig.autoArmForceBypass) {
+                // Legacy behavior: refuse to arm while zones are open.
                 Serial.println("\n⚠️ [AUTO-PROTECT] No se puede auto-armar: Zonas abiertas.");
                 dsc.beep(4); // Play error chirp
             } else {
-                Serial.printf("🕒 [AUTO-PROTECT] Inactividad detectada (%lu mins). Auto-armado instantáneo con chirp...\n", (unsigned long)miscConfig.autoArmTimeoutMins);
-                
+                // Force-bypass path: if zones are still open, auto-bypass exactly those
+                // so the rest of the house arms anyway. They auto-restore on close
+                // (see trigger_zone_change). Only runs when autoArmForceBypass is on.
+                int bypassedCount = 0;
+                if (anyZoneOpen) {
+                    for (int i = 0; i < 8; i++) {
+                        if (i == 1) continue; // Zone 2 (motion) is already ignored for readiness
+                        if (sensors[i] && !zoneBypassed[i]) {
+                            user_alarm_set_zone_bypass(i, true);
+                            autoBypassedZones[i] = true;
+                            bypassedCount++;
+                            eventlog::add(eventlog::EventType::AUTO_BYPASS, (uint8_t)(i + 1));
+                            Serial.printf("🚪 [AUTO-PROTECT] Zona %d abierta -> auto-bypass al armar.\n", i + 1);
+                        }
+                    }
+                }
+
+                Serial.printf("🕒 [AUTO-PROTECT] Inactividad detectada (%lu mins). Auto-armado%s...\n",
+                              (unsigned long)miscConfig.autoArmTimeoutMins,
+                              bypassedCount ? " (con zonas bypasseadas)" : "");
+
                 // Clear alarm memory on arming
                 memset(zoneAlarmMemory, 0, sizeof(zoneAlarmMemory));
                 hasAlarmMemory = false;
@@ -1119,7 +1155,8 @@ extern "C" void user_alarm_loop() {
                     update_current_mode(ARMED_AWAY);
                     mqtt_publish_state("armed_away");
                 }
-                dsc.beep(1); // Play single confirmation chirp
+                // Distinct cue when we had to bypass something so it's noticeable.
+                if (bypassedCount) { dsc.beep(3); } else { dsc.beep(1); }
                 print_status();
             }
         }

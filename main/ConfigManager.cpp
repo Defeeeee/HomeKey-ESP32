@@ -114,6 +114,7 @@ ConfigManager::ConfigManager() : m_isInitialized(false) {
       {"autoArmEnabled", &m_miscConfig.autoArmEnabled},
       {"autoArmTimeoutMins", &m_miscConfig.autoArmTimeoutMins},
       {"autoArmMode", &m_miscConfig.autoArmMode},
+      {"autoArmForceBypass", &m_miscConfig.autoArmForceBypass},
       {"armedHomeZones", &m_miscConfig.armedHomeZones},
       {"dscClockPin", &m_miscConfig.dscClockPin},
       {"dscReadPin", &m_miscConfig.dscReadPin},

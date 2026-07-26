@@ -10,9 +10,12 @@ This document defines the **standard operating procedure and handoff protocol** 
 
 | Parameter | Value / Status | Notes |
 | :--- | :--- | :--- |
-| **ESP32 Local IP** | `192.168.68.200` | Fixed local network IP |
-| **Home Assistant IP** | `100.112.141.102:8123` | Tailscale VPN |
+| **ESP32 Local IP** | `192.168.68.200` | Fixed local network IP (LAN `192.168.68.0/24`) |
+| **Home Assistant / DefeServer** | `100.112.141.102:8123` (Tailscale) | Linux, on a **different** LAN `192.168.1.0/24`; runs HA + MQTT |
 | **MQTT Broker** | `192.168.68.120:1883` | Topic: `home/alarm/#` |
+| **IP Camera (vereda)** | `rtsp://192.168.68.115:8554/stream1` | H.264, no auth. Sub-stream `/stream2`. HA entity `camera.camara_vereda`. "yg rtsp server" firmware (SriHome/Sricam) |
+| **Ring doorbell (cloud)** | HA `Ring` integration | `camera.front_door_live_view`, `event.front_door_ding`, `event.front_door_motion`. Cloud-only, **no local stream**; on-demand stills fail (404/500 — needs Ring Protect) |
+| **Tailscale subnet routing** | PC-ARRIBA advertises `192.168.68.0/24`; DefeServer advertises `192.168.1.0/24` | DefeServer reaches the 68 LAN (ESP32, camera) **through PC-ARRIBA** — needs `sudo tailscale set --accept-routes=true` on DefeServer (done). PC-ARRIBA must stay online. |
 | **Firmware Branch** | `main` | Repository: `Defeeeee/HomeKey-ESP32` |
 | **Mobile App Client** | `vector-security-app` | Repository: `Defeeeee/ESP32-AlarmApp` |
 
@@ -20,18 +23,23 @@ This document defines the **standard operating procedure and handoff protocol** 
 
 ## ⚡ Active Hardware Pinout Mapping
 
-| Function / Component | ESP32 GPIO Pin | Details |
-| :--- | :--- | :--- |
-| **DSC Keybus Clock** | **GPIO 21** | Keypad Interface |
-| **DSC Keybus Read** | **GPIO 18** | Keypad Interface |
-| **DSC Keybus Write** | **GPIO 19** | Keypad Interface |
-| **Zone 1** (Front Door / Uno Bridge) | **GPIO 13** | Input (Pull-up / Active HIGH from Uno) |
-| **Zone 2** (Living Room Motion) | **GPIO 17** | Input |
-| **Zone 3** (Bedroom Window Flap A) | **GPIO 14** | Input |
-| **Zone 4** (Fondo B) | **GPIO 25** | Input |
-| **Zone 5** (Planta Alta Curtain) | **GPIO 27** | Input |
-| **Zone 7** | **GPIO 32** | Input |
-| **Physical Siren Relay Output** | **GPIO 26** | **Active HIGH** (Drives external siren relay) |
+> **Verified 2026-07-19 against the live device** (`GET /config?type=misc` on `192.168.68.200`). Prior versions of this table had stale GPIOs (Z4 was listed as 25, Z7 as 32) and mislabeled Zone 1 as the Uno bridge input. **Zones 1–4 are wired directly to the ESP32; Zones 5–7 are the 433 MHz RF sensors coming in through the Arduino Uno bridge** (Uno pin → 10k/33k voltage divider → ESP32 GPIO, shared GND). Zone 8 is disabled.
+
+| Function / Component | ESP32 GPIO Pin | Source | Details |
+| :--- | :--- | :--- | :--- |
+| **DSC Keybus Clock** | **GPIO 21** | — | Keypad Interface |
+| **DSC Keybus Read** | **GPIO 18** | — | Keypad Interface |
+| **DSC Keybus Write** | **GPIO 19** | — | Keypad Interface |
+| **Zone 1** (Front Door) | **GPIO 13** | Wired (direct) | Physical contact, not via Uno |
+| **Zone 2** (Living Room Motion) | **GPIO 17** | Wired (direct) | Excluded in Home mode (`armedHomeZones`) |
+| **Zone 3** (Bedroom Window Flap A) | **GPIO 14** | Wired (direct) | |
+| **Zone 4** (Fondo B) | **GPIO 12** | Wired (direct) | (was mis-documented as GPIO 25) |
+| **Zone 5** (DSC WS4945 — 433 MHz RF) | **GPIO 27** | Uno bridge **pin 3** | Wireless door/window sensor via voltage divider. Active — decoder reframed 2026-07-26 |
+| **Zone 6** (Gadnic WS1000 #A — 433 MHz RF) | **GPIO 15** | Uno bridge **pin 4** | ⏸ **Disabled** (`zoneDisabled6 = true`) — sensor battery dead, see Session 6 |
+| **Zone 7** (Gadnic WS1000 #B — 433 MHz RF) | **GPIO 2** | Uno bridge **pin 5** | ⏸ **Disabled** (`zoneDisabled7 = true`) — sensor battery dead (was mis-documented as GPIO 32) |
+| **Zone 8** | — (255) | Disabled | `zoneDisabled8 = true`, no pin assigned |
+| **Physical Siren Relay Output** | **GPIO 26** | Output | **Active HIGH** (drives external siren relay) |
+| **NFC HomeKey reader** | — | Disabled | Instantiation commented out in `main.cpp` (hardware not attached) |
 
 ---
 
@@ -46,6 +54,32 @@ This document defines the **standard operating procedure and handoff protocol** 
 ---
 
 ## 📝 Agent Progress Log & Handoff History
+
+### [2026-07-26] - Claude (Opus 5) — Session 6 (Zone 5 root-caused & fixed: DSC decoder reframed)
+
+- **Zone 5 "stuck open" — root cause found and fixed.** The DSC path had always used a **continuous, unframed rolling-buffer matcher**: it shifted one bit per pulse edge and compared the whole 32-bit window against 9 hardcoded codes. With no framing there is nothing to reject ambient 433 MHz noise. The arithmetic explains the symptom exactly: ~1000 edges/s × 9 codes ≈ **7.8×10⁸ comparisons/day** against a 2³² space → a coincidental "open" match **every few days**, which then latched the output HIGH forever (nothing ever reset it). The WS1000 path never did this because it frames on the sync gap.
+- **Fix**: the DSC now uses the same sync-framed decoder. Codes had to be **re-captured** (the legacy values were arbitrary bit-alignment windows and can't match a sync-delimited word). Captured live on 2026-07-26 over 5 open/close events:
+  - `DSC_OPEN_CODES = { 0xA2A22AA8 }`, `DSC_CLOSED_CODES = { 0x28A88AA8 }` — 48-bit framed words.
+- **Two non-obvious findings that shaped the design** (both would have broken a naive implementation):
+  1. **The bit count wobbles across repeats of the same burst** (48/38/36 observed for one event) because a missed edge shortens the frame, while the 32-bit word value stays stable. The original confirmation compared `bits == candidateBits && word == candidateWord`, so the repeat counter **reset on every frame and never confirmed**. Repeats are now counted on the **word only**.
+  2. **Reception is lossy: 2 of 5 real events produced only ONE decodable frame.** Requiring 3 repeats would have **missed ~40% of real openings** — far worse than a false positive. So `DSC_CONFIRM_REPEATS = 1`: the framing (exact 48-bit word + `MIN_FRAME_BITS`) is the noise defence, not the repeat count. New false-match rate is ~1 per 2 million days.
+- **Verified end-to-end on hardware**: 4 movements → 4 events, **zero noise lines** (the prior capture log had ~40 lines of garbage). Chain confirmed sensor → Uno → divider → GPIO27 → ESP32 → MQTT. Zone 5 re-enabled (`zoneDisabled5 = false`).
+- **⚡ The BROWNOUT reboot logged on 2026-07-19 was NOT a hardware fault** — the user cut power to the ESP32 themselves. No power-supply investigation needed; closing that item.
+- **Gadnic WS1000 (Zones 6 & 7) — dead batteries, confirmed by measurement** (0.3 V and 0.7 V; no LED, no TX on button press) after <1 week of use. **Zones 6 and 7 are DISABLED** (`zoneDisabled6/7 = true`) until new cells are fitted. Context for whoever picks this up: they use **coin cells**, are fed by **external wired reed switches over short CAT6e** (so RF noise pickup is ruled out), and live in a closet. Prime suspect for the drain is a **tamper/case switch held active** because the cases were opened to route the reed wires — verify with a current measurement (µA in the resting state, lid closed) before blaming the cells. **Note the silent-failure mode: a dead wireless sensor reads CLOSED, i.e. "secure"** — the argument for adding RF supervision.
+- **Tooling**: the Uno can now be flashed and sniffed head-lessly from this repo — `arduino-cli` (brew) + the AVR core already installed by the IDE; port `/dev/cu.usbserial-A50285BI`, FQBN `arduino:avr:uno`. Compile/upload from a folder whose name matches the `.ino` (the `tools/arduino_uno_test/` folder holds two sketches, so copy the file out first).
+- **Modified files**: [decoder_bridge.ino](file:///Users/defeee/alarma-homekey-arduino/tools/arduino_uno_test/decoder_bridge.ino) (rewritten: unified framed decoder, legacy matcher deleted, ISR slimmed further).
+
+### [2026-07-19] - Claude (Opus 4.8) — Session 5 (auto-arm force-bypass + pinout fix + HA/camera/Ring integration)
+- **⚠️ GIT STATUS**: The firmware/UI changes below (force-bypass feature) and the pinout doc corrections are **flashed to the device via OTA and working, but NOT yet committed** — they are uncommitted in the working tree on `main`. Needs a PR (`feat: auto-arm force-bypass + pinout docs`). Do not assume they're in git history yet.
+- **Auto-arm force-bypass** (fixes: auto-arm silently failed when a zone was left open — a recurring real-world issue): new config `autoArmForceBypass` (default off, toggle in the System settings page under Auto-Protect). When on and zones are open at auto-arm time, it **arms anyway and auto-bypasses the open zones** (instead of aborting), logs `AUTO_BYPASS` per zone + a distinct 3-beep cue. When an auto-bypassed zone later **closes**, it auto-un-bypasses (`BYPASS_RESTORE`) so it re-protects. Disarm clears the `autoBypassedZones[]` marks. Reboot-while-bypassed is safe (boot baselines `sensors[]` to real state, only transitions trigger — no false alarm).
+  - Files: [config.hpp](file:///Users/defeee/alarma-homekey-arduino/main/include/config.hpp) (`autoArmForceBypass`), [ConfigManager.cpp](file:///Users/defeee/alarma-homekey-arduino/main/ConfigManager.cpp), [EventLog.hpp](file:///Users/defeee/alarma-homekey-arduino/main/include/EventLog.hpp) (`AUTO_BYPASS=13`, `BYPASS_RESTORE=14`), [user_alarm.cpp](file:///Users/defeee/alarma-homekey-arduino/main/user_alarm.cpp) (auto-arm block + `trigger_zone_change` auto-restore + disarm cleanup + `autoBypassedZones[]`), [AppMisc.svelte](file:///Users/defeee/alarma-homekey-arduino/data/src/lib/components/AppMisc.svelte) (toggle), [eventlog.svelte.ts](file:///Users/defeee/alarma-homekey-arduino/data/src/lib/stores/eventlog.svelte.ts) + [api.ts](file:///Users/defeee/alarma-homekey-arduino/data/src/lib/types/api.ts).
+- **Pinout doc correction**: [AGENTS.md](file:///Users/defeee/alarma-homekey-arduino/AGENTS.md) pinout table + [decoder_bridge.ino](file:///Users/defeee/alarma-homekey-arduino/tools/arduino_uno_test/decoder_bridge.ino) pin comments fixed to the live-verified mapping (Z1–Z4 wired, Z5=DSC/Uno pin 3, Z6=WS1000-A/Uno pin 4, Z7=WS1000-B/Uno pin 5, Z8 disabled; corrected GPIOs Z4=12, Z7=2).
+- **Home Assistant integration** (all HA-side config, not in this repo — recorded in the System State table above):
+  - Tailscale subnet routing enabled on DefeServer (`tailscale set --accept-routes=true`) so HA (on 192.168.1.x) can reach the camera/ESP32 on 192.168.68.x via PC-ARRIBA subnet router.
+  - Local IP camera discovered/confirmed usable: `rtsp://192.168.68.115:8554/stream1` (no auth), added to HA as `camera.camara_vereda`.
+  - Ring doorbell added via HA `Ring` integration (cloud). Its camera can't produce on-demand stills (404/500 without Ring Protect), so intrusion snapshots use the local vereda cam; Ring is used for doorbell/motion events + live view on tap.
+  - HA automation: on `alarm_control_panel.alarma_principal` → `triggered`, saves a vereda snapshot and sends an **iOS critical push** (`push.sound.critical:1`, bypasses Do-Not-Disturb) with the vereda image (`/api/camera_proxy/camera.camara_vereda`) and a `url` deep-link to the dashboard. Requires iOS "Critical Alerts" permission for the HA app.
+- **Verification**: firmware + web UI built clean; OTA-flashed; boot clean (`reset_reason=SW`, no PANIC); event log + deferred-flush still working; `autoArmForceBypass` field present in live `/config?type=misc`.
 
 ### [2026-07-19] - Claude (Opus 4.8) → 🅰️ ANTIGRAVITY: REVIEW REQUESTED (post-#5 PANIC + proposed fix)
 
