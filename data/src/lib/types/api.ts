@@ -181,6 +181,21 @@ export interface MiscConfig {
   autoArmMode: number;
   /** Force auto-arm even with zones open, auto-bypassing them (they auto-restore on close) */
   autoArmForceBypass: boolean;
+  /** Minutes before the siren is auto-silenced while staying in alarm (0 = never) */
+  sirenTimeoutMins: number;
+  /** Entry delay in seconds */
+  entryDelaySecs: number;
+  /** Exit delay in seconds */
+  exitDelaySecs: number;
+  /** Editable zone labels, also used for Home Assistant entity names */
+  zoneName1: string;
+  zoneName2: string;
+  zoneName3: string;
+  zoneName4: string;
+  zoneName5: string;
+  zoneName6: string;
+  zoneName7: string;
+  zoneName8: string;
   /** Enable Ethernet connectivity */
   ethernetEnabled: boolean;
   /** Active Ethernet preset index */

@@ -31,6 +31,7 @@ MqttManager::MqttManager(const ConfigManager& configManager)
       m_mqttSslConfig(configManager.getMqttSslConfig()),
       m_client(nullptr),
       device_name(configManager.getConfig<espConfig::misc_config_t>().deviceName),
+      m_miscConfig(configManager.getConfig<espConfig::misc_config_t>()),
       m_sslConfigured(false)
 {
 }
@@ -688,7 +689,7 @@ void MqttManager::publishHassDiscovery() {
     for (int i = 1; i <= 8; i++) {
         // Binary Sensor for Zone
         cJSON *sensorPayload = cJSON_CreateObject();
-        std::string zoneName = "Zona " + std::to_string(i);
+        std::string zoneName = m_miscConfig.zoneName(i - 1);
         std::string zoneIdStr = "zona_" + std::to_string(i);
         std::string uniqueId = deviceID + "_zona_" + std::to_string(i);
         std::string stateTopic = "home/alarm/sensor/" + std::to_string(i);
@@ -712,7 +713,7 @@ void MqttManager::publishHassDiscovery() {
 
         // Switch for Bypass
         cJSON *switchPayload = cJSON_CreateObject();
-        std::string switchName = "Zona " + std::to_string(i) + " Bypass";
+        std::string switchName = m_miscConfig.zoneName(i - 1) + " Bypass";
         std::string switchIdStr = "zona_" + std::to_string(i) + "_bypass";
         std::string switchUniqueId = deviceID + "_zona_" + std::to_string(i) + "_bypass";
         std::string switchStateTopic = "home/alarm/zone/" + std::to_string(i) + "/bypass/state";

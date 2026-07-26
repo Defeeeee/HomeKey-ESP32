@@ -27,6 +27,21 @@
 	// svelte-ignore state_referenced_locally
 	let nfcPresetsList = $state<NfcGpioPinsPreset>($state.snapshot(nfcPresets));
 
+	// The keypad PIN is write-only — the API only ever returns it masked, so this
+	// input starts empty and is applied on save only when something was typed.
+	let newAlarmCode = $state("");
+
+	const timeFields = [
+		{ key: 'entryDelaySecs', label: 'Entrada (s)' },
+		{ key: 'exitDelaySecs', label: 'Salida (s)' },
+		{ key: 'sirenTimeoutMins', label: 'Corte sirena (min)' }
+	] as const;
+
+	const zoneNameKeys = [
+		'zoneName1', 'zoneName2', 'zoneName3', 'zoneName4',
+		'zoneName5', 'zoneName6', 'zoneName7', 'zoneName8'
+	] as const;
+
 	const colorOptions = [
 		{ value: 0, label: 'Tan', class: 'bg-[#ddd5cc] text-[#3E2723]' },
 		{ value: 1, label: 'Gold', class: 'bg-[#e6d1a8] text-[#3E2723]' },
@@ -38,17 +53,25 @@
 		e.preventDefault();
 		try {
 			if (!miscConfig || !misc) return;
-			if (miscConfig.alarmCode) {
+			// The PIN is write-only: the API returns it masked, so the input is a
+			// separate field that starts empty. Only send a new PIN when one was
+			// actually typed; otherwise leave the masked value untouched so the
+			// diff omits it and the stored PIN is preserved.
+			if (newAlarmCode) {
 				const pinRegex = /^[0-9]{4}$/;
-				if (!pinRegex.test(miscConfig.alarmCode)) {
+				if (!pinRegex.test(newAlarmCode)) {
 					alert("Alarm PIN code must be exactly 4 digits (0-9).");
 					return;
 				}
+				miscConfig.alarmCode = newAlarmCode;
+			} else {
+				miscConfig.alarmCode = misc.alarmCode;
 			}
 			const result = await saveConfig("misc", diff(misc, miscConfig));
 			if (result.success) {
 				miscConfig = result.data;
 				misc = result.data;
+				newAlarmCode = "";
 			}
 		} catch (e) {
 			const message = e instanceof Error ? e.message : String(e);
@@ -567,14 +590,15 @@
 											<span class="label-text text-xs">Keypad PIN Code</span>
 										</label>
 										<input
-											type="text"
-											bind:value={miscConfig.alarmCode}
-											placeholder="1234"
+											type="password"
+											bind:value={newAlarmCode}
+											placeholder="•••• (sin cambios)"
 											maxlength="4"
 											class="input input-sm input-bordered w-full"
-											required
 											inputmode="numeric"
+											autocomplete="new-password"
 										/>
+										<span class="text-[10px] text-base-content/60 mt-1">Vacío = sin cambios. Nunca se devuelve por la API.</span>
 									</div>
 								</div>
 
@@ -624,7 +648,7 @@
 										<div class="flex items-center justify-between pt-2 border-t border-base-200">
 											<div class="pr-3">
 												<h4 class="text-xs font-semibold">Force-arm with auto-bypass</h4>
-												<p class="text-xs text-base-content/60">If zones are still open at auto-arm time, arm anyway and bypass those zones. They automatically re-activate once closed. Prevents auto-arm from silently failing when a door/window is left open.</p>
+												<p class="text-xs text-base-content/60">Arma igual con zonas abiertas, bypasseándolas. Se reactivan al cerrarse.</p>
 											</div>
 											<input
 												type="checkbox"
@@ -635,22 +659,34 @@
 									{/if}
 								</div>
 
-								<div class="space-y-2">
-									<h4 class="text-xs font-semibold">Alarm Zones (Armed Home Mode)</h4>
-									<p class="text-xs text-base-content/60">Select which security zones are active and monitored when the system is armed in Home mode.</p>
+								<!-- Delays & Siren timeout -->
+								<div class="space-y-3 bg-base-100 p-3 rounded-lg border border-base-200">
+									<div>
+										<h4 class="text-xs font-semibold">Tiempos</h4>
+										
+									</div>
+									<div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+										{#each timeFields as f}
+											<div class="form-control">
+												<label class="label"><span class="label-text text-xs">{f.label}</span></label>
+												<input type="number" bind:value={miscConfig[f.key]} min="0" max="255" class="input input-sm input-bordered w-full" />
+											</div>
+										{/each}
+									</div>
 								</div>
 
-								<div class="grid grid-cols-2 sm:grid-cols-3 gap-3 bg-base-100 p-3 rounded-lg">
-									{#each Array.from({ length: 8 }) as _, i}
-										<label class="flex items-center gap-3 py-1.5 px-2 hover:bg-base-200/50 rounded-lg cursor-pointer">
-											<input
-												type="checkbox"
-												bind:checked={homeZones[i]}
-												onchange={updateArmedHomeZones}
-												class="checkbox checkbox-primary checkbox-sm"
-											/>
-											<span class="text-sm font-medium">Zone {i + 1} {i === 0 ? '(Delay)' : '(Instant)'}</span>
-										</label>
+								<div class="space-y-2">
+									<h4 class="text-xs font-semibold">Zonas</h4>
+									<p class="text-xs text-base-content/60">Nombre y si está activa en modo Home.</p>
+								</div>
+
+								<div class="grid grid-cols-1 sm:grid-cols-2 gap-2 bg-base-100 p-3 rounded-lg">
+									{#each zoneNameKeys as key, i}
+										<div class="flex items-center gap-2">
+											<input type="checkbox" bind:checked={homeZones[i]} onchange={updateArmedHomeZones} class="checkbox checkbox-primary checkbox-sm" />
+											<span class="text-xs text-base-content/60 w-5">Z{i + 1}</span>
+											<input type="text" bind:value={miscConfig[key]} maxlength="32" class="input input-sm input-bordered flex-1" />
+										</div>
 									{/each}
 								</div>
 							</div>

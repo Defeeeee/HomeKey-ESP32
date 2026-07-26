@@ -23,6 +23,22 @@
 
 const char* ConfigManager::TAG = "ConfigManager";
 
+namespace {
+// Placeholder substituted for secrets in API responses, and rejected on the way
+// back in so that saving an untouched (still-masked) field can never overwrite
+// the real value with the mask itself.
+constexpr const char* SECRET_MASK = "********";
+
+// Secrets must never be readable through the config API: GET /config is
+// reachable by anyone who can reach the device (LAN or Tailscale) and web auth
+// is optional. The alarm PIN is the important one — leaking it means anyone can
+// disarm. `setupCode` is deliberately NOT masked: the UI has to display it for
+// HomeKit pairing.
+bool isSecretKey(const std::string& key) {
+  return key.contains("Password") || key.contains("Passwd") || key == "alarmCode";
+}
+}  // namespace
+
 using crypto::ScopedEntropy;
 using crypto::ScopedCtrDrbg;
 using crypto::ScopedPk;
@@ -137,7 +153,18 @@ ConfigManager::ConfigManager() : m_isInitialized(false) {
       {"zoneDisabled8", &m_miscConfig.zoneDisabled8},
       {"sirenPin", &m_miscConfig.sirenPin},
       {"sirenActiveHigh", &m_miscConfig.sirenActiveHigh},
-      {"sirenDisabled", &m_miscConfig.sirenDisabled}
+      {"sirenDisabled", &m_miscConfig.sirenDisabled},
+      {"sirenTimeoutMins", &m_miscConfig.sirenTimeoutMins},
+      {"entryDelaySecs", &m_miscConfig.entryDelaySecs},
+      {"exitDelaySecs", &m_miscConfig.exitDelaySecs},
+      {"zoneName1", &m_miscConfig.zoneName1},
+      {"zoneName2", &m_miscConfig.zoneName2},
+      {"zoneName3", &m_miscConfig.zoneName3},
+      {"zoneName4", &m_miscConfig.zoneName4},
+      {"zoneName5", &m_miscConfig.zoneName5},
+      {"zoneName6", &m_miscConfig.zoneName6},
+      {"zoneName7", &m_miscConfig.zoneName7},
+      {"zoneName8", &m_miscConfig.zoneName8}
     }
     },
     {
@@ -757,7 +784,13 @@ std::string ConfigManager::updateFromJson(const std::string& json_string) {
 
           if constexpr (std::is_same_v<PointeeType, std::string>) {
             if (cJSON_IsString(it)) {
-              arg->assign(it->valuestring);
+              // A masked secret coming back in means "unchanged" — writing it
+              // would replace the real password/PIN with the mask itself.
+              if (isSecretKey(keyStr) && std::string(it->valuestring) == SECRET_MASK) {
+                ESP_LOGD(TAG, "Ignoring unchanged masked secret '%s'.", keyStr.c_str());
+              } else {
+                arg->assign(it->valuestring);
+              }
             } else {
               ESP_LOGW(TAG, "Validation failed for '%s': type mismatch, expected string.", keyStr.c_str());
             }
@@ -894,8 +927,8 @@ std::string ConfigManager::serializeToJson() {
                 using PointeeType = std::remove_pointer_t<T>;
 
                 if constexpr (std::is_same_v<PointeeType, std::string>) {
-                    if(key.contains("Password") || key.contains("Passwd")){
-                        cJSON_AddStringToObject(root.get(), key.c_str(), "********");
+                    if(isSecretKey(key)){
+                        cJSON_AddStringToObject(root.get(), key.c_str(), SECRET_MASK);
                     } else {
                         cJSON_AddStringToObject(root.get(), key.c_str(), arg->c_str());
                     }

@@ -20,7 +20,8 @@ export type SystemInfo = {
   siren_testing?: boolean,
   siren_disabled?: boolean,
   mqtt_down_ms?: number,
-  reset_reason?: string
+  reset_reason?: string,
+  zone_names?: string[]
 };
 
 export const systemInfo : SystemInfo = $state({

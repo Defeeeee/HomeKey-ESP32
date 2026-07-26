@@ -46,12 +46,16 @@ bool sensors[8] = {false, false, false, false, false, false, false, false};
 AppEventLoop::SubscriptionHandle m_remote_event;
 
 unsigned long armingStartTime = 0;
-const unsigned long EXIT_DELAY_MS = 15000; // 15 segundos de cuenta atrás (DSC-aligned)
 int lastSecondsLeft = -1;
 
 unsigned long entryDelayStartTime = 0;
-const unsigned long ENTRY_DELAY_MS = 15000; // 15 segundos de retardo de entrada
 int lastEntrySecondsLeft = -1;
+
+// Exit/entry delays are configurable (were hardcoded at 15 s). Read through
+// helpers so a change from the Web UI takes effect without a reboot; defined
+// below the configManager extern.
+unsigned long exit_delay_ms();
+unsigned long entry_delay_ms();
 AlarmMode armedModeBeforeDelay = ARMED_AWAY;
 
 // MQTT connectivity nudge (NON-REBOOTING by design — see the block in
@@ -175,6 +179,13 @@ extern std::unique_ptr<MqttManager> mqttManager;
 extern std::unique_ptr<WebServerManager> webServerManager;
 extern std::unique_ptr<NfcManager> nfcManager;
 
+unsigned long exit_delay_ms() {
+    return (unsigned long)configManager->getConfig<espConfig::misc_config_t>().exitDelaySecs * 1000UL;
+}
+unsigned long entry_delay_ms() {
+    return (unsigned long)configManager->getConfig<espConfig::misc_config_t>().entryDelaySecs * 1000UL;
+}
+
 void print_status();
 void broadcast_ui_update() {
     if (webServerManager) {
@@ -291,7 +302,7 @@ void trigger_zone_change(int zoneIdx, bool isOpen, const char* sourceName) {
         entryDelayStartTime = millis();
         lastEntrySecondsLeft = -1;
         mqtt_publish_state("pending");
-        Serial.printf("\n⏳ [SISTEMA] Puerta principal abierta (%s). INICIANDO RETARDO DE ENTRADA (15s)...\n", sourceName);
+        Serial.printf("\n⏳ [SISTEMA] Puerta principal abierta (%s). INICIANDO RETARDO DE ENTRADA (%us)...\n", sourceName, (unsigned)(entry_delay_ms()/1000));
     }
     if (shouldTrigger) {
         g_lastTriggerZone = (uint8_t)zoneId; // record which zone tripped for the event log
@@ -841,7 +852,7 @@ extern "C" void user_alarm_loop() {
     // 4. Handle Exit Delay Timer & Keypad Beeping
     if (currentMode == ARMING_AWAY || currentMode == ARMING_HOME) {
         unsigned long elapsed = millis() - armingStartTime;
-        if (elapsed >= EXIT_DELAY_MS) {
+        if (elapsed >= exit_delay_ms()) {
             if (currentMode == ARMING_AWAY) {
                 update_current_mode(ARMED_AWAY);
                 mqtt_publish_state("armed_away");
@@ -854,7 +865,7 @@ extern "C" void user_alarm_loop() {
             dsc.beep(3); // 3 rapid confirmation beeps on armed state
             print_status();
         } else {
-            int secondsLeft = (EXIT_DELAY_MS - elapsed) / 1000;
+            int secondsLeft = (exit_delay_ms() - elapsed) / 1000;
             if (secondsLeft != lastSecondsLeft) {
                 Serial.printf("⏳ ARMANDO EN %d SEG...\n", secondsLeft + 1);
                 lastSecondsLeft = secondsLeft;
@@ -878,14 +889,14 @@ extern "C" void user_alarm_loop() {
     // 5. Handle Entry Delay Timer & Keypad Beeping
     if (currentMode == ENTRY_DELAY) {
         unsigned long elapsed = millis() - entryDelayStartTime;
-        if (elapsed >= ENTRY_DELAY_MS) {
+        if (elapsed >= entry_delay_ms()) {
             update_current_mode(TRIGGERED);
             mqtt_publish_state("triggered");
             Serial.println("\n🔴🔴🔴 [ALERTA] TIEMPO DE ENTRADA AGOTADO - INTRUSION DETECTADA 🔴🔴🔴");
             dsc.buzzer(255); // Sound physical buzzer continuously for up to 255s
             print_status();
         } else {
-            int secondsLeft = (ENTRY_DELAY_MS - elapsed) / 1000;
+            int secondsLeft = (entry_delay_ms() - elapsed) / 1000;
             if (secondsLeft != lastEntrySecondsLeft) {
                 Serial.printf("⚠️ [ALERTA] ALARMA SE DISPARARÁ EN %d SEG... ¡Haga tap con HomeKey! 🔊 ¡BEEP!\n", secondsLeft + 1);
                 lastEntrySecondsLeft = secondsLeft;
@@ -918,30 +929,52 @@ extern "C" void user_alarm_loop() {
     }
 
     // 7. Handle Triggered Siren / Keypad Buzzer Wailing & Physical Siren GPIO Pin
+    auto& miscConfig = configManager->getConfig<espConfig::misc_config_t>();
     static bool wasSirenActive = false;
     static unsigned long last_beep = 0;
-    bool sirenActive = (currentMode == TRIGGERED) || isSirenTestActive;
-    if (sirenActive) {
+    static unsigned long sirenStartTime = 0;
+    static bool sirenCutoff = false;
+
+    bool sirenTriggered = (currentMode == TRIGGERED);
+    bool sirenActive = sirenTriggered || isSirenTestActive;
+
+    if (sirenActive && !wasSirenActive) {
+        sirenStartTime = millis(); // fresh alarm -> restart the cutoff timer
+        sirenCutoff = false;
+    }
+
+    // Auto-cutoff: silence the sounder after the configured time while STAYING in
+    // TRIGGERED — state machine, MQTT and HomeKit are untouched, so the alarm is
+    // still going off, it just stops making noise (neighbours, and a legal
+    // requirement in many places). Only a real trigger is cut short; the manual
+    // siren test is user-held and deliberately exempt.
+    if (sirenTriggered && !sirenCutoff && miscConfig.sirenTimeoutMins > 0 &&
+        millis() - sirenStartTime > (unsigned long)miscConfig.sirenTimeoutMins * 60000UL) {
+        sirenCutoff = true;
+        dsc.buzzer(0);
+        eventlog::add(eventlog::EventType::SIREN_CUTOFF,
+                      (uint8_t)(miscConfig.sirenTimeoutMins > 255 ? 255 : miscConfig.sirenTimeoutMins));
+        Serial.printf("\n🔇 [SIRENA] Corte automatico tras %u min. El sistema SIGUE en alarma.\n",
+                      (unsigned)miscConfig.sirenTimeoutMins);
+    }
+
+    if (sirenActive && !sirenCutoff) {
         if (!wasSirenActive || last_beep == 0 || millis() - last_beep > 60000) {
             Serial.println("📢 !!! SIRENA ACTIVA !!!");
             dsc.buzzer(255); // Keep wailing (renew keepalive every 60s)
             last_beep = millis();
         }
-        wasSirenActive = true;
-    } else {
-        if (wasSirenActive) {
-            dsc.buzzer(0);
-            dsc.beep(0);
-            wasSirenActive = false;
-            last_beep = 0;
-        }
+    } else if (wasSirenActive && !sirenActive) {
+        dsc.buzzer(0);
+        dsc.beep(0);
+        last_beep = 0;
     }
+    wasSirenActive = sirenActive;
 
-    auto& miscConfig = configManager->getConfig<espConfig::misc_config_t>();
     if (miscConfig.sirenPin != 255) {
-        // Web UI siren-disable toggle gates ONLY this physical relay output.
-        // currentMode/TRIGGERED/arming logic above is untouched and keeps running normally.
-        bool sirenOutputActive = sirenActive && !miscConfig.sirenDisabled;
+        // Web UI siren-disable toggle and the auto-cutoff gate ONLY this physical
+        // relay output. currentMode/TRIGGERED/arming logic above is untouched.
+        bool sirenOutputActive = sirenActive && !miscConfig.sirenDisabled && !sirenCutoff;
         digitalWrite(miscConfig.sirenPin, sirenOutputActive ? (miscConfig.sirenActiveHigh ? HIGH : LOW) : (miscConfig.sirenActiveHigh ? LOW : HIGH));
     }
 

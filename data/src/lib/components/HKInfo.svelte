@@ -292,7 +292,7 @@
 
   function toggleSirenDisabled() {
     const nextDisabled = !(systemInfo?.siren_disabled ?? false);
-    if (nextDisabled && !confirm('¿Deshabilitar la sirena física (Pin 26)? El sistema de alarma sigue armando, desarmando y detectando zonas con total normalidad — solo no va a sonar hasta que la vuelvas a habilitar acá. No se reactiva sola.')) {
+    if (nextDisabled && !confirm('¿Deshabilitar la sirena física? La alarma sigue funcionando normal, solo no suena. No se reactiva sola.')) {
       return;
     }
     if (ws && ws.connected) {
@@ -701,8 +701,8 @@
                 <div class="text-xs font-semibold text-slate-200">Sirena Física (Pin 26)</div>
                 <div class="text-[10px] text-slate-400">
                   {systemInfo?.siren_disabled
-                    ? 'Deshabilitada — la alarma sigue armando/detectando con normalidad, no vuelve a activarse sola'
-                    : 'Habilitada — suena normalmente en TRIGGERED o prueba'}
+                    ? 'Deshabilitada — la alarma sigue funcionando, solo no suena'
+                    : 'Habilitada'}
                 </div>
               </div>
             </div>

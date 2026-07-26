@@ -219,6 +219,33 @@ namespace espConfig
     uint8_t sirenPin = 26;
     bool sirenActiveHigh = true;
     bool sirenDisabled = false;
+    uint16_t sirenTimeoutMins = 5;   // silence the sounder after N min (0 = never)
+    uint16_t entryDelaySecs = 15;
+    uint16_t exitDelaySecs = 15;
+    // Zone labels, editable from the Web UI. Used by the UI and by the Home
+    // Assistant MQTT discovery payloads, so renaming a zone renames it everywhere.
+    std::string zoneName1 = "Puerta Principal";
+    std::string zoneName2 = "Movimiento Living";
+    std::string zoneName3 = "Ventana Dormitorio";
+    std::string zoneName4 = "Fondo B";
+    std::string zoneName5 = "DSC Inalambrico";
+    std::string zoneName6 = "WS1000 A";
+    std::string zoneName7 = "WS1000 B";
+    std::string zoneName8 = "Zona 8";
+
+    // idx is 0-based (0..7). Falls back to zone 1 for out-of-range input.
+    const std::string& zoneName(uint8_t idx) const {
+      switch (idx) {
+        case 1: return zoneName2;
+        case 2: return zoneName3;
+        case 3: return zoneName4;
+        case 4: return zoneName5;
+        case 5: return zoneName6;
+        case 6: return zoneName7;
+        case 7: return zoneName8;
+        default: return zoneName1;
+      }
+    }
   };
   struct actions_config_t {
     enum colorMap

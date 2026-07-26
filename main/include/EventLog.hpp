@@ -32,6 +32,7 @@ enum class EventType : uint8_t {
   SIREN_ENABLED  = 12, // arg = Source
   AUTO_BYPASS    = 13, // arg = zone (1-8) auto-bypassed at auto-arm because it was open
   BYPASS_RESTORE = 14, // arg = zone (1-8) auto-un-bypassed after it finally closed
+  SIREN_CUTOFF   = 15, // arg = minutes after which the sounder was auto-silenced
 };
 
 // Who initiated a user action (for arm/disarm/siren events). Stored in `arg`.
