@@ -30,6 +30,8 @@ enum class EventType : uint8_t {
   WIFI_UP        = 10, // arg = 0
   SIREN_DISABLED = 11, // arg = Source
   SIREN_ENABLED  = 12, // arg = Source
+  AUTO_BYPASS    = 13, // arg = zone (1-8) auto-bypassed at auto-arm because it was open
+  BYPASS_RESTORE = 14, // arg = zone (1-8) auto-un-bypassed after it finally closed
 };
 
 // Who initiated a user action (for arm/disarm/siren events). Stored in `arg`.

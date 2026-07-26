@@ -620,6 +620,18 @@
 												</select>
 											</div>
 										</div>
+
+										<div class="flex items-center justify-between pt-2 border-t border-base-200">
+											<div class="pr-3">
+												<h4 class="text-xs font-semibold">Force-arm with auto-bypass</h4>
+												<p class="text-xs text-base-content/60">If zones are still open at auto-arm time, arm anyway and bypass those zones. They automatically re-activate once closed. Prevents auto-arm from silently failing when a door/window is left open.</p>
+											</div>
+											<input
+												type="checkbox"
+												bind:checked={miscConfig.autoArmForceBypass}
+												class="toggle toggle-primary toggle-sm"
+											/>
+										</div>
 									{/if}
 								</div>
 

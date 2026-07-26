@@ -179,6 +179,8 @@ export interface MiscConfig {
   autoArmTimeoutMins: number;
   /** Arm mode for auto-arm (0 = Stay/Home, 1 = Away) */
   autoArmMode: number;
+  /** Force auto-arm even with zones open, auto-bypassing them (they auto-restore on close) */
+  autoArmForceBypass: boolean;
   /** Enable Ethernet connectivity */
   ethernetEnabled: boolean;
   /** Active Ethernet preset index */
