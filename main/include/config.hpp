@@ -221,7 +221,13 @@ namespace espConfig
     bool sirenDisabled = false;
     uint16_t sirenTimeoutMins = 5;   // silence the sounder after N min (0 = never)
     uint16_t zoneOpenWarnMins = 15;  // flag a zone left open this long (0 = never)
-    uint16_t zoneChatterPerHour = 20; // openings/hour that mark a zone as faulty (0 = off)
+    uint16_t zoneChatterPerHour = 60; // openings/hour that mark a zone as faulty (0 = off)
+    // Bitmask of zones that are MOTION detectors rather than door/window contacts
+    // (bit 0 = zone 1). A PIR legitimately trips hundreds of times a day and can
+    // stay active for long stretches, so the "chatter" and "left open" warnings —
+    // which assume a contact — are skipped for these. Defaults to zone 2, the
+    // living-room PIR. Same bitmask style as armedHomeZones.
+    uint8_t zoneMotionMask = 0x02;
     uint16_t entryDelaySecs = 15;
     uint16_t exitDelaySecs = 15;
     // Zone labels, editable from the Web UI. Used by the UI and by the Home

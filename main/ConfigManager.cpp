@@ -157,6 +157,7 @@ ConfigManager::ConfigManager() : m_isInitialized(false) {
       {"sirenTimeoutMins", &m_miscConfig.sirenTimeoutMins},
       {"zoneOpenWarnMins", &m_miscConfig.zoneOpenWarnMins},
       {"zoneChatterPerHour", &m_miscConfig.zoneChatterPerHour},
+      {"zoneMotionMask", &m_miscConfig.zoneMotionMask},
       {"entryDelaySecs", &m_miscConfig.entryDelaySecs},
       {"exitDelaySecs", &m_miscConfig.exitDelaySecs},
       {"zoneName1", &m_miscConfig.zoneName1},

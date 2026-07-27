@@ -280,10 +280,8 @@ void trigger_zone_change(int zoneIdx, bool isOpen, const char* sourceName) {
         zoneLongOpenLogged[zoneIdx] = false;
         zoneOpenCount[zoneIdx]++;
         if (zoneOpenCountHour[zoneIdx] < 65535) zoneOpenCountHour[zoneIdx]++;
-        if (mqttManager) {
-            mqttManager->publish("home/alarm/zone/" + std::to_string(zoneId) + "/open_count",
-                                 std::to_string(zoneOpenCount[zoneIdx]), 0, true);
-        }
+        // The count is published on the periodic tick, not here: a motion zone can
+        // open ~1000 times a day and that many retained publishes is pure churn.
     } else if (!isOpen && wasOpen && zoneOpenSince[zoneIdx] != 0) {
         uint32_t dur = (uint32_t)((millis() - zoneOpenSince[zoneIdx]) / 1000UL);
         zoneOpenSince[zoneIdx] = 0;
@@ -1188,6 +1186,9 @@ extern "C" void user_alarm_loop() {
         if (publishTick) lastOpenPublish = millis();
         for (int i = 0; i < 8; i++) {
             if (zoneOpenSince[i] == 0) continue;
+            // Motion zones are exempt: a PIR staying active is normal, not a door
+            // someone forgot to close.
+            if (miscConfig.zoneMotionMask & (1 << i)) continue;
             uint32_t secs = zone_open_secs(i);
             if (!zoneLongOpenLogged[i] && secs >= (uint32_t)miscConfig.zoneOpenWarnMins * 60UL) {
                 zoneLongOpenLogged[i] = true;
@@ -1210,6 +1211,9 @@ extern "C" void user_alarm_loop() {
     }
     if (miscConfig.zoneChatterPerHour > 0) {
         for (int i = 0; i < 8; i++) {
+            // Skip motion zones — hundreds of trips a day is a PIR working correctly,
+            // and flagging it would flood the 48-entry event log and bury real history.
+            if (miscConfig.zoneMotionMask & (1 << i)) continue;
             if (!zoneChatterLogged[i] && zoneOpenCountHour[i] >= miscConfig.zoneChatterPerHour) {
                 zoneChatterLogged[i] = true;
                 eventlog::add(eventlog::EventType::ZONE_CHATTER, (uint8_t)(i + 1));
@@ -1260,6 +1264,10 @@ extern "C" void user_alarm_loop() {
             mqttManager->publish("home/alarm/diag/wifi_drops", std::to_string(wifiDropCount), 0, true);
             mqttManager->publish("home/alarm/diag/mqtt_drops", std::to_string(mqttDropCount), 0, true);
             mqttManager->publish("home/alarm/diag/uptime_secs", std::to_string(millis() / 1000UL), 0, true);
+            for (int i = 0; i < 8; i++) {
+                mqttManager->publish("home/alarm/zone/" + std::to_string(i + 1) + "/open_count",
+                                     std::to_string(zoneOpenCount[i]), 0, true);
+            }
         }
     }
 
