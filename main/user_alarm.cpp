@@ -266,6 +266,12 @@ void trigger_zone_change(int zoneIdx, bool isOpen, const char* sourceName) {
     
     if (user_alarm_is_zone_disabled(zoneIdx)) {
         sensors[zoneIdx] = false;
+        // Clear any open-duration tracking too: this early return happens before
+        // the bookkeeping below, so a zone disabled while it was open would keep
+        // an open timer running forever and eventually warn about a zone that is
+        // administratively gone.
+        zoneOpenSince[zoneIdx] = 0;
+        zoneLongOpenLogged[zoneIdx] = false;
         return;
     }
     
@@ -1186,6 +1192,9 @@ extern "C" void user_alarm_loop() {
         if (publishTick) lastOpenPublish = millis();
         for (int i = 0; i < 8; i++) {
             if (zoneOpenSince[i] == 0) continue;
+            // A zone can be disabled while it is open; drop its timer rather than
+            // keep warning and publishing about a zone that no longer exists.
+            if (user_alarm_is_zone_disabled(i)) { zoneOpenSince[i] = 0; continue; }
             // Motion zones are exempt: a PIR staying active is normal, not a door
             // someone forgot to close.
             if (miscConfig.zoneMotionMask & (1 << i)) continue;
