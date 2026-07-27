@@ -32,15 +32,17 @@ export const EVENT = {
   AUTO_BYPASS: 13,
   BYPASS_RESTORE: 14,
   SIREN_CUTOFF: 15,
+  ZONE_LEFT_OPEN: 16,
+  ZONE_CHATTER: 17,
 } as const;
 
 const SOURCE_LABEL = ["sistema", "teclado", "remoto", "auto"];
 // esp_reset_reason_t ordering: POWERON=1, EXT=2, SW=3, PANIC=4, INT_WDT=5,
 // TASK_WDT=6, WDT=7, DEEPSLEEP=8, BROWNOUT=9 (0 = UNKNOWN).
 const RESET_REASON: Record<number, string> = {
-  0: "desconocido", 1: "encendido", 2: "externo", 3: "software",
+  0: "?", 1: "power", 2: "ext", 3: "SW",
   4: "PANIC ⚠", 5: "INT_WDT", 6: "TASK_WDT", 7: "WDT",
-  8: "deep-sleep", 9: "brownout ⚡",
+  8: "sleep", 9: "brownout ⚡",
 };
 
 function src(arg: number): string {
@@ -75,9 +77,9 @@ export function formatEvent(e: RawEvent): FormattedEvent {
     case EVENT.DISARMED:
       return { icon: "🔓", label: "Desarmado", detail: src(e.arg), tone: "good", time };
     case EVENT.ENTRY_DELAY:
-      return { icon: "⏳", label: "Retardo de entrada", detail: "", tone: "warn", time };
+      return { icon: "⏳", label: "Entrada", detail: "", tone: "warn", time };
     case EVENT.TRIGGERED:
-      return { icon: "🚨", label: "ALARMA DISPARADA", detail: e.arg ? `zona ${e.arg}` : "", tone: "bad", time };
+      return { icon: "🚨", label: "ALARMA", detail: e.arg ? `zona ${e.arg}` : "", tone: "bad", time };
     case EVENT.MQTT_LOST:
       return { icon: "📡", label: "MQTT caído", detail: "", tone: "warn", time };
     case EVENT.MQTT_UP:
@@ -85,15 +87,19 @@ export function formatEvent(e: RawEvent): FormattedEvent {
     case EVENT.WIFI_LOST:
       return { icon: "📶", label: "WiFi caído", detail: "", tone: "warn", time };
     case EVENT.WIFI_UP:
-      return { icon: "📶", label: "WiFi conectado", detail: "", tone: "good", time };
+      return { icon: "📶", label: "WiFi OK", detail: "", tone: "good", time };
     case EVENT.SIREN_DISABLED:
-      return { icon: "🔇", label: "Sirena deshabilitada", detail: src(e.arg), tone: "warn", time };
+      return { icon: "🔇", label: "Sirena OFF", detail: src(e.arg), tone: "warn", time };
     case EVENT.SIREN_ENABLED:
-      return { icon: "🔊", label: "Sirena habilitada", detail: src(e.arg), tone: "good", time };
+      return { icon: "🔊", label: "Sirena ON", detail: src(e.arg), tone: "good", time };
     case EVENT.AUTO_BYPASS:
       return { icon: "🚪", label: "Auto-bypass", detail: e.arg ? `zona ${e.arg}` : "", tone: "warn", time };
     case EVENT.BYPASS_RESTORE:
-      return { icon: "✅", label: "Zona reactivada", detail: e.arg ? `zona ${e.arg}` : "", tone: "good", time };
+      return { icon: "✅", label: "Zona OK", detail: e.arg ? `zona ${e.arg}` : "", tone: "good", time };
+    case EVENT.ZONE_LEFT_OPEN:
+      return { icon: "🚪", label: "Zona abierta", detail: e.arg ? `zona ${e.arg}` : "", tone: "warn", time };
+    case EVENT.ZONE_CHATTER:
+      return { icon: "⚠️", label: "Zona inestable", detail: e.arg ? `zona ${e.arg}` : "", tone: "bad", time };
     case EVENT.SIREN_CUTOFF:
       return { icon: "🔇", label: "Sirena cortada", detail: e.arg ? `tras ${e.arg} min` : "", tone: "warn", time };
     default:

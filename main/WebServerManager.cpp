@@ -2108,11 +2108,23 @@ std::string WebServerManager::getDeviceMetrics() {
   {
     const auto& misc = m_configManager.getConfig<espConfig::misc_config_t>();
     cJSON *names = cJSON_CreateArray();
+    cJSON *openSecs = cJSON_CreateArray();
     for (int i = 0; i < 8; i++) {
       cJSON_AddItemToArray(names, cJSON_CreateString(misc.zoneName(i).c_str()));
+      cJSON_AddItemToArray(openSecs, cJSON_CreateNumber((double)user_alarm_zone_open_secs(i)));
     }
     cJSON_AddItemToObject(status, "zone_names", names);
+    cJSON_AddItemToObject(status, "zone_open_secs", openSecs);
   }
+  cJSON *openCounts = cJSON_CreateArray();
+  for (int i = 0; i < 8; i++) {
+    cJSON_AddItemToArray(openCounts, cJSON_CreateNumber((double)user_alarm_zone_open_count(i)));
+  }
+  cJSON_AddItemToObject(status, "zone_open_counts", openCounts);
+  cJSON_AddNumberToObject(status, "wifi_uptime_pct", user_alarm_wifi_uptime_pct());
+  cJSON_AddNumberToObject(status, "mqtt_uptime_pct", user_alarm_mqtt_uptime_pct());
+  cJSON_AddNumberToObject(status, "wifi_drops", user_alarm_wifi_drops());
+  cJSON_AddNumberToObject(status, "mqtt_drops", user_alarm_mqtt_drops());
   
   return cjson_to_string_and_free(status);
 }

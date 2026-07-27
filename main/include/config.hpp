@@ -220,6 +220,8 @@ namespace espConfig
     bool sirenActiveHigh = true;
     bool sirenDisabled = false;
     uint16_t sirenTimeoutMins = 5;   // silence the sounder after N min (0 = never)
+    uint16_t zoneOpenWarnMins = 15;  // flag a zone left open this long (0 = never)
+    uint16_t zoneChatterPerHour = 20; // openings/hour that mark a zone as faulty (0 = off)
     uint16_t entryDelaySecs = 15;
     uint16_t exitDelaySecs = 15;
     // Zone labels, editable from the Web UI. Used by the UI and by the Home
