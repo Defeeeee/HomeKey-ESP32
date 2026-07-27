@@ -78,6 +78,44 @@ bool zoneBypassed[8] = {false, false, false, false, false, false, false, false};
 // Zones auto-bypassed by force auto-arm (were open at arm time). Tracked separately
 // from manual bypasses so we only auto-restore (un-bypass) these when they close.
 bool autoBypassedZones[8] = {false, false, false, false, false, false, false, false};
+
+// --- Per-zone open-duration tracking ---
+// How long each zone spends open. A zone sitting open for hours is worth knowing
+// about: it blocks arming, and on battery-powered wireless sensors it is a prime
+// suspect for flattening the cell. Kept in RAM only (resets on reboot) —
+// deliberately not persisted, to keep NVS writes off the hot path.
+unsigned long zoneOpenSince[8] = {0};      // millis() when it opened, 0 = closed
+uint32_t zoneOpenTotalSecs[8] = {0};       // cumulative seconds open since boot
+uint32_t zoneMaxOpenSecs[8] = {0};         // longest single open stretch
+bool zoneLongOpenLogged[8] = {false};      // so the warning fires once per opening
+
+// Seconds the zone has been continuously open right now (0 if closed).
+uint32_t zone_open_secs(int idx) {
+    if (idx < 0 || idx >= 8 || zoneOpenSince[idx] == 0) return 0;
+    return (uint32_t)((millis() - zoneOpenSince[idx]) / 1000UL);
+}
+
+// --- Per-zone opening counters / chatter detection ---
+// A healthy contact opens a handful of times a day. A failing one (loose magnet,
+// bad splice, a window rattling in the wind) can open hundreds of times, which is
+// invisible in the state view because each opening looks perfectly normal.
+uint32_t zoneOpenCount[8] = {0};       // total openings since boot
+uint16_t zoneOpenCountHour[8] = {0};   // openings in the current rolling hour
+unsigned long chatterWindowStart = 0;  // start of that hour window
+bool zoneChatterLogged[8] = {false};   // one warning per window
+
+// --- Connectivity statistics ---
+// Turns "it drops sometimes" into numbers. Measured since boot (deliberately not
+// persisted — no NVS writes on the hot path); the persistent event log already
+// carries the WIFI/MQTT up-down history across reboots.
+uint32_t wifiUpSecs = 0, wifiDownSecs = 0;
+uint32_t mqttUpSecs = 0, mqttDownSecs = 0;
+uint16_t wifiDropCount = 0, mqttDropCount = 0;
+
+uint8_t link_uptime_pct(uint32_t up, uint32_t down) {
+    uint32_t total = up + down;
+    return total ? (uint8_t)((up * 100UL) / total) : 100;
+}
 bool chimeEnabled = false;
 bool zoneAlarmMemory[8] = {false, false, false, false, false, false, false, false};
 bool hasAlarmMemory = false;
@@ -228,12 +266,42 @@ void trigger_zone_change(int zoneIdx, bool isOpen, const char* sourceName) {
     
     if (user_alarm_is_zone_disabled(zoneIdx)) {
         sensors[zoneIdx] = false;
+        // Clear any open-duration tracking too: this early return happens before
+        // the bookkeeping below, so a zone disabled while it was open would keep
+        // an open timer running forever and eventually warn about a zone that is
+        // administratively gone.
+        zoneOpenSince[zoneIdx] = 0;
+        zoneLongOpenLogged[zoneIdx] = false;
         return;
     }
     
+    bool wasOpen = sensors[zoneIdx];
     sensors[zoneIdx] = isOpen;
     int zoneId = zoneIdx + 1;
     if (mqttManager && strcmp(sourceName, "MQTT-RF") != 0) mqttManager->publishSensorState(zoneId, isOpen);
+
+    // Open-duration bookkeeping on the edges only.
+    if (isOpen && !wasOpen) {
+        zoneOpenSince[zoneIdx] = millis();
+        zoneLongOpenLogged[zoneIdx] = false;
+        zoneOpenCount[zoneIdx]++;
+        if (zoneOpenCountHour[zoneIdx] < 65535) zoneOpenCountHour[zoneIdx]++;
+        // The count is published on the periodic tick, not here: a motion zone can
+        // open ~1000 times a day and that many retained publishes is pure churn.
+    } else if (!isOpen && wasOpen && zoneOpenSince[zoneIdx] != 0) {
+        uint32_t dur = (uint32_t)((millis() - zoneOpenSince[zoneIdx]) / 1000UL);
+        zoneOpenSince[zoneIdx] = 0;
+        zoneOpenTotalSecs[zoneIdx] += dur;
+        if (dur > zoneMaxOpenSecs[zoneIdx]) zoneMaxOpenSecs[zoneIdx] = dur;
+        if (mqttManager) {
+            mqttManager->publish("home/alarm/zone/" + std::to_string(zoneId) + "/open_secs",
+                                 std::to_string(dur), 0, true);
+        }
+        Serial.printf("⏱️ [ZONA %d] Estuvo abierta %u s (max %u s, total %u s)\n",
+                      zoneId, (unsigned)dur, (unsigned)zoneMaxOpenSecs[zoneIdx],
+                      (unsigned)zoneOpenTotalSecs[zoneIdx]);
+    }
+
     Serial.printf("⚡ [%s] Cambio en Zona %d: %s\n", sourceName, zoneId, isOpen ? "OPEN" : "CLOSED");
     broadcast_ui_update();
 
@@ -545,6 +613,25 @@ extern "C" bool user_alarm_is_siren_disabled() {
     auto& miscConfig = configManager->getConfig<espConfig::misc_config_t>();
     return miscConfig.sirenDisabled;
 }
+
+extern "C" unsigned long user_alarm_zone_open_secs(int zoneIdx) {
+    return zone_open_secs(zoneIdx);
+}
+
+extern "C" unsigned long user_alarm_zone_max_open_secs(int zoneIdx) {
+    if (zoneIdx < 0 || zoneIdx >= 8) return 0;
+    return zoneMaxOpenSecs[zoneIdx];
+}
+
+extern "C" unsigned long user_alarm_zone_open_count(int zoneIdx) {
+    if (zoneIdx < 0 || zoneIdx >= 8) return 0;
+    return zoneOpenCount[zoneIdx];
+}
+
+extern "C" unsigned char user_alarm_wifi_uptime_pct() { return link_uptime_pct(wifiUpSecs, wifiDownSecs); }
+extern "C" unsigned char user_alarm_mqtt_uptime_pct() { return link_uptime_pct(mqttUpSecs, mqttDownSecs); }
+extern "C" unsigned int  user_alarm_wifi_drops() { return wifiDropCount; }
+extern "C" unsigned int  user_alarm_mqtt_drops() { return mqttDropCount; }
 
 // Milliseconds MQTT has been continuously disconnected (0 if connected or never yet
 // connected). Surfaced in the Web UI health panel. Uses the same lastMqttConnectedTime
@@ -1096,6 +1183,74 @@ extern "C" void user_alarm_loop() {
         dsc.lightTrouble = hasTrouble ? on : off;
     }
 
+    // Zones left open: once a zone passes zoneOpenWarnMins, record it and publish
+    // the running duration. Fires once per opening (zoneLongOpenLogged), then keeps
+    // MQTT refreshed every minute so Home Assistant can show "open for N min".
+    if (miscConfig.zoneOpenWarnMins > 0) {
+        static unsigned long lastOpenPublish = 0;
+        bool publishTick = (millis() - lastOpenPublish > 60000);
+        if (publishTick) lastOpenPublish = millis();
+        for (int i = 0; i < 8; i++) {
+            if (zoneOpenSince[i] == 0) continue;
+            // A zone can be disabled while it is open; drop its timer rather than
+            // keep warning and publishing about a zone that no longer exists.
+            if (user_alarm_is_zone_disabled(i)) { zoneOpenSince[i] = 0; continue; }
+            // Motion zones are exempt: a PIR staying active is normal, not a door
+            // someone forgot to close.
+            if (miscConfig.zoneMotionMask & (1 << i)) continue;
+            uint32_t secs = zone_open_secs(i);
+            if (!zoneLongOpenLogged[i] && secs >= (uint32_t)miscConfig.zoneOpenWarnMins * 60UL) {
+                zoneLongOpenLogged[i] = true;
+                eventlog::add(eventlog::EventType::ZONE_LEFT_OPEN, (uint8_t)(i + 1));
+                Serial.printf("\n🚪 [ZONA %d] Abierta hace %u min.\n", i + 1, (unsigned)(secs / 60));
+            }
+            if (publishTick && mqttManager) {
+                mqttManager->publish("home/alarm/zone/" + std::to_string(i + 1) + "/open_secs",
+                                     std::to_string(secs), 0, true);
+            }
+        }
+    }
+
+    // Chatter detection: too many openings inside one rolling hour means the sensor
+    // (or its wiring) is faulty, not that the door is busy. Each opening looks
+    // normal on its own, so only the rate reveals it.
+    if (millis() - chatterWindowStart > 3600000UL) {
+        chatterWindowStart = millis();
+        for (int i = 0; i < 8; i++) { zoneOpenCountHour[i] = 0; zoneChatterLogged[i] = false; }
+    }
+    if (miscConfig.zoneChatterPerHour > 0) {
+        for (int i = 0; i < 8; i++) {
+            // Skip motion zones — hundreds of trips a day is a PIR working correctly,
+            // and flagging it would flood the 48-entry event log and bury real history.
+            if (miscConfig.zoneMotionMask & (1 << i)) continue;
+            if (!zoneChatterLogged[i] && zoneOpenCountHour[i] >= miscConfig.zoneChatterPerHour) {
+                zoneChatterLogged[i] = true;
+                eventlog::add(eventlog::EventType::ZONE_CHATTER, (uint8_t)(i + 1));
+                if (mqttManager) {
+                    mqttManager->publish("home/alarm/zone/" + std::to_string(i + 1) + "/chatter",
+                                         std::to_string(zoneOpenCountHour[i]), 0, true);
+                }
+                Serial.printf("\n⚠️ [ZONA %d] %u aperturas en una hora — sensor probablemente fallado.\n",
+                              i + 1, (unsigned)zoneOpenCountHour[i]);
+            }
+        }
+    }
+
+    // Connectivity accounting: accumulate one second at a time into up/down
+    // buckets for WiFi and MQTT, and count the drops.
+    {
+        static unsigned long lastConnTick = 0;
+        static int8_t wifiWas = -1;
+        if (millis() - lastConnTick >= 1000) {
+            lastConnTick = millis();
+            if (WiFi.isConnected()) wifiUpSecs++; else wifiDownSecs++;
+            if (mqttManager && mqttManager->isConnected()) mqttUpSecs++; else mqttDownSecs++;
+        }
+        int8_t wifiNow = WiFi.isConnected() ? 1 : 0;
+        if (wifiWas == 1 && wifiNow == 0) wifiDropCount++;
+        wifiWas = wifiNow;
+    }
+
     // Log MQTT connectivity edges (up/down) to the persistent event log so an
     // overnight broker/network outage is visible after the fact.
     {
@@ -1103,8 +1258,26 @@ extern "C" void user_alarm_loop() {
         int8_t mqttNow = (mqttManager && mqttManager->isConnected()) ? 1 : 0;
         if (mqttWas != -1 && mqttNow != mqttWas) {
             eventlog::add(mqttNow ? eventlog::EventType::MQTT_UP : eventlog::EventType::MQTT_LOST);
+            if (!mqttNow) mqttDropCount++;
         }
         mqttWas = mqttNow;
+    }
+
+    // Publish the connectivity summary once a minute so Home Assistant can chart it.
+    {
+        static unsigned long lastDiagPublish = 0;
+        if (mqttManager && mqttManager->isConnected() && millis() - lastDiagPublish > 60000) {
+            lastDiagPublish = millis();
+            mqttManager->publish("home/alarm/diag/wifi_uptime_pct", std::to_string(link_uptime_pct(wifiUpSecs, wifiDownSecs)), 0, true);
+            mqttManager->publish("home/alarm/diag/mqtt_uptime_pct", std::to_string(link_uptime_pct(mqttUpSecs, mqttDownSecs)), 0, true);
+            mqttManager->publish("home/alarm/diag/wifi_drops", std::to_string(wifiDropCount), 0, true);
+            mqttManager->publish("home/alarm/diag/mqtt_drops", std::to_string(mqttDropCount), 0, true);
+            mqttManager->publish("home/alarm/diag/uptime_secs", std::to_string(millis() / 1000UL), 0, true);
+            for (int i = 0; i < 8; i++) {
+                mqttManager->publish("home/alarm/zone/" + std::to_string(i + 1) + "/open_count",
+                                     std::to_string(zoneOpenCount[i]), 0, true);
+            }
+        }
     }
 
     // MQTT connectivity nudge. The ESP-IDF MQTT client already auto-reconnects on its

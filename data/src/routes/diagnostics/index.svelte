@@ -78,7 +78,7 @@
   <!-- System Health -->
   <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5">
     <div class="p-2.5 bg-[#0e0e15]/40 border border-white/5 rounded-xl">
-      <div class="text-[9px] uppercase tracking-wider text-slate-500">Último reinicio</div>
+      <div class="text-[9px] uppercase tracking-wider text-slate-500">Reinicio</div>
       <div class="font-bold {toneClass[resetTone]}">{systemInfo.reset_reason ?? "—"}</div>
     </div>
     <div class="p-2.5 bg-[#0e0e15]/40 border border-white/5 rounded-xl">
@@ -86,7 +86,7 @@
       <div class="font-bold text-slate-200">{fmtUptime(systemInfo.uptime)}</div>
     </div>
     <div class="p-2.5 bg-[#0e0e15]/40 border border-white/5 rounded-xl">
-      <div class="text-[9px] uppercase tracking-wider text-slate-500">Heap libre</div>
+      <div class="text-[9px] uppercase tracking-wider text-slate-500">Heap</div>
       <div class="font-bold text-slate-200">{systemInfo.free_heap ? Math.round(systemInfo.free_heap / 1024) + " KB" : "—"}</div>
     </div>
     <div class="p-2.5 bg-[#0e0e15]/40 border border-white/5 rounded-xl">
@@ -100,7 +100,7 @@
       </div>
     </div>
     <div class="p-2.5 bg-[#0e0e15]/40 border border-white/5 rounded-xl">
-      <div class="text-[9px] uppercase tracking-wider text-slate-500">MQTT caído hace</div>
+      <div class="text-[9px] uppercase tracking-wider text-slate-500">MQTT down</div>
       <div class="font-bold {mqttDownMin > 0 ? 'text-amber-400' : 'text-slate-200'}">{mqttDownMin > 0 ? mqttDownMin + " min" : "—"}</div>
     </div>
   </div>
@@ -134,8 +134,8 @@
       <!-- Persistent Event Log (survives reboots) -->
       <div class="bg-[#0e0e15]/40 border border-white/5 rounded-xl p-2.5">
         <h3 class="font-bold text-slate-300 mb-1.5 flex items-center gap-1.5">
-          Historial persistente
-          <span class="text-[9px] font-normal text-slate-500">(persistente · {events.length})</span>
+          Historial
+          <span class="text-[9px] font-normal text-slate-500">({events.length})</span>
         </h3>
         <div class="space-y-1 max-h-96 overflow-y-auto">
           {#each events as e}
@@ -156,7 +156,7 @@
 
     <!-- Live client-side activity (this session only) -->
     <div class="bg-[#0e0e15]/40 border border-white/5 rounded-xl p-2.5 text-[10px]">
-      <h3 class="font-bold text-slate-300 mb-1.5">Live Activity <span class="text-[9px] font-normal text-slate-500">(esta sesión)</span></h3>
+      <h3 class="font-bold text-slate-300 mb-1.5">Actividad</h3>
       <div class="space-y-1 max-h-96 overflow-y-auto">
         {#each zoneHistory as a}
           <div class="flex items-center justify-between p-1 rounded bg-white/[0.01] border border-white/5">
