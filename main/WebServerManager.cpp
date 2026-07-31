@@ -1862,16 +1862,24 @@ void WebServerManager::removeWebSocketClient(int fd) {
 }
 
 void WebServerManager::broadcastWs(const uint8_t *payload, size_t len,
-                                   httpd_ws_type_t type) {
+                                   httpd_ws_type_t type,
+                                   bool bufferIfNoClients) {
   std::vector<int> fds;
   {
-    std::scoped_lock lock(m_wsClientsMutex); 
+    std::scoped_lock lock(m_wsClientsMutex);
     fds.reserve(m_wsClients.size());
     for (const auto &c : m_wsClients)
       fds.push_back(c->fd);
   }
   static const size_t max_buffer = 64;
   if (fds.empty()) {
+    // No client attached. Log lines are worth holding for replay; periodic state
+    // snapshots are NOT — only the newest one has any value, and buffering 64 of
+    // them is actively dangerous: the metrics payload grew to ~1 KB (zone names,
+    // per-zone counters), so 64 copies is ~77 KB against ~85 KB of free heap.
+    // Zone activity calls broadcast_ui_update() on every change, which filled the
+    // buffer within minutes and exhausted the heap -> PANIC reboot loop.
+    if (!bufferIfNoClients) return;
     if(m_wsBroadcastBuffer.size() >= max_buffer){
       m_wsBroadcastBuffer.pop_front();
     }
@@ -2131,7 +2139,9 @@ std::string WebServerManager::getDeviceMetrics() {
 
 void WebServerManager::broadcastDeviceMetrics() {
   std::string metrics = getDeviceMetrics();
-  broadcastWs((const uint8_t *)metrics.c_str(), metrics.size(), HTTPD_WS_TYPE_TEXT);
+  // Live state: never buffered — a stale snapshot is worthless and 64 of them
+  // exhaust the heap (see broadcastWs).
+  broadcastWs((const uint8_t *)metrics.c_str(), metrics.size(), HTTPD_WS_TYPE_TEXT, false);
 }
 
 std::string WebServerManager::getDeviceInfo() {
@@ -2157,7 +2167,7 @@ void WebServerManager::statusTimerCallback(void *arg) {
   WebServerManager *instance = static_cast<WebServerManager *>(arg);
   auto metrics = instance->getDeviceMetrics();
   instance->broadcastWs((const uint8_t *)(metrics.c_str()), metrics.size(),
-                        HTTPD_WS_TYPE_TEXT);
+                        HTTPD_WS_TYPE_TEXT, false);
 }
 
 // ============================================================================
@@ -2427,7 +2437,7 @@ void WebServerManager::broadcastOTAStatus(const OTAState& state) {
   
   std::string otaStatus = cjson_to_string_and_free(status);
   broadcastWs((const uint8_t *)otaStatus.c_str(), otaStatus.size(),
-              HTTPD_WS_TYPE_TEXT);
+              HTTPD_WS_TYPE_TEXT, false);
 }
 
 // ============================================================================

@@ -69,7 +69,11 @@ public:
   bool basicAuth(httpd_req_t* req);
   void setMqttManager(MqttManager *mqttManager) { m_mqttManager = mqttManager; }
   void setNfcManager(NfcManager *nfcManager) { m_nfcManager = nfcManager; }
-  void broadcastWs(const uint8_t *payload, size_t len, httpd_ws_type_t type);
+  // bufferIfNoClients: hold the message in m_wsBroadcastBuffer for replay when a
+  // client eventually connects. Correct for log lines, but must be FALSE for
+  // periodic state snapshots — see the comment on the buffer in broadcastWs().
+  void broadcastWs(const uint8_t *payload, size_t len, httpd_ws_type_t type,
+                   bool bufferIfNoClients = true);
   void broadcastDeviceMetrics();
 
 private:
